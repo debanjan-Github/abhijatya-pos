@@ -15,7 +15,8 @@
     "typescript": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "tesseract.js": "latest"
+    "tesseract.js": "latest",
+    "@supabase/supabase-js": "latest"
   },
   "devDependencies": {
     "@eslint/js": "latest",

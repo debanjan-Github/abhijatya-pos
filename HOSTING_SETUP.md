@@ -37,7 +37,9 @@ After the Supabase connection is implemented:
 
 1. In Vercel choose **Add New → Project**.
 2. Import the private `abhijatya-pos` GitHub repository.
-3. Add the public environment variables from `.env.example` in Vercel's Environment Variables screen.
+3. Add the public environment variables from `.env.example` in Vercel's Environment Variables screen:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
 4. Select **Deploy**.
 5. Open the resulting HTTPS URL on an iPhone and use Safari → Share → **Add to Home Screen**.
 

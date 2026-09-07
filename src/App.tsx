@@ -1,20 +1,37 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import type { Product, ProductInput } from './domain/types'
 import { formatInr, parseRupees } from './domain/productRules'
 import { productRepository } from './services/productRepository'
 import { readPriceTag } from './services/priceTagReader'
+import { supabase } from './services/supabaseClient'
 
 type Page = 'Dashboard' | 'Products' | 'Inventory' | 'Sales' | 'Customers' | 'Reports' | 'Settings'
 const pages: Page[] = ['Dashboard', 'Products', 'Inventory', 'Sales', 'Customers', 'Reports', 'Settings']
 const blank = (): ProductInput => ({ name: '', sku: '', barcode: '', zoner: '', material: '', sellingPricePaise: 0, stockQuantity: 1 })
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(() => Boolean(supabase))
+  useEffect(() => {
+    if (!supabase) return
+    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false) })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setLoading(false) })
+    return () => subscription.unsubscribe()
+  }, [])
+  if (loading) return <main className="app-shell"><section className="card"><h2>Opening Abhijatya…</h2></section></main>
+  if (!supabase) return <main className="app-shell"><section className="card error"><h2>Supabase is not configured</h2><p>Add the Project URL and publishable key to `.env.local`.</p></section></main>
+  if (!session) return <StaffSignIn />
+  return <PosApp email={session.user.email ?? 'Staff member'} onSignOut={() => { void supabase?.auth.signOut() }} />
+}
+
+function PosApp({ email, onSignOut }: { email: string; onSignOut: () => void }) {
   const [page, setPage] = useState<Page>('Dashboard')
   const [products, setProducts] = useState(() => productRepository.list())
   const [editing, setEditing] = useState<Product | undefined>()
   const refresh = () => setProducts(productRepository.list())
   return <main className="app-shell">
-    <header><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div><button className="scan" disabled title="Camera barcode scanning arrives in Milestone 2">⌁ Scan barcode</button></header>
+    <header><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div><div className="staff-actions"><small>{email}</small><button className="secondary" onClick={onSignOut}>Sign out</button><button className="scan" disabled title="Camera barcode scanning arrives in Milestone 2">⌁ Scan barcode</button></div></header>
     <nav>{pages.map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => { setPage(item); setEditing(undefined) }}>{item}</button>)}</nav>
     {page === 'Dashboard' && <Dashboard products={products} onProducts={() => setPage('Products')} />}
     {page === 'Products' && <Products products={products} editing={editing} onEdit={setEditing} onSave={refresh} onCancel={() => setEditing(undefined)} />}
@@ -22,6 +39,20 @@ export default function App() {
     {page === 'Sales' && <Billing products={products} />}
     {['Customers', 'Reports', 'Settings'].includes(page) && <section className="card"><h2>{page}</h2><p>This section is planned for a later milestone. Product data is ready for it.</p></section>}
   </main>
+}
+
+function StaffSignIn() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); if (!supabase) return
+    setSubmitting(true); setMessage('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setSubmitting(false); setMessage(error ? 'Could not sign in. Check your email and password.' : '')
+  }
+  return <main className="app-shell auth-shell"><section className="card"><p className="eyebrow">STAFF ACCESS</p><h1>ABHIJATYA</h1><h2>Sign in to the boutique POS</h2><p>Use the staff email and password provided by the business owner.</p><form onSubmit={submit}><label>Email<input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label><label>Password<input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{message && <p className="error">{message}</p>}<button disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button></form></section></main>
 }
 
 function Dashboard({ products, onProducts }: { products: Product[]; onProducts: () => void }) {
