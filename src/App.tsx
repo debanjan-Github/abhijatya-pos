@@ -11,7 +11,7 @@ import { supabase } from './services/supabaseClient'
 import { SearchableMultiSelect } from './components/SearchableMultiSelect'
 import { ImagePreviewModal } from './components/ImagePreviewModal'
 import { LiveBarcodeScannerModal } from './components/LiveBarcodeScannerModal'
-import boutiqueLogo from './assets/abhijatya-boutique-logo.svg'
+import boutiqueLogo from '../LOGO My.png'
 
 type Page = 'Dashboard' | 'Products' | 'Inventory' | 'Sales' | 'Customers' | 'Reports' | 'Settings'
 const pages: Page[] = ['Dashboard', 'Products', 'Inventory', 'Sales', 'Customers', 'Reports', 'Settings']
