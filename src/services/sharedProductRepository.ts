@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient'
 
 type ProductRow = {
   id: string; name: string; sku: string; barcode: string; zoner: string | null; material: string | null
-  selling_price_paise: number; stock_quantity: number; image_path: string | null; price_tag_image_path: string | null
+  selling_price_paise: number; stock_quantity: number; image_path?: string | null; price_tag_image_path?: string | null
   archived_at: string | null; created_at: string; updated_at: string
 }
 
@@ -24,11 +24,21 @@ const ensureValid = (input: ProductInput) => {
 
 export const sharedProductRepository = {
   async list(includeArchived = false): Promise<Product[]> {
-    let query = client().from('products').select('*').order('updated_at', { ascending: false })
+    // Photo data is intentionally excluded from the shared five-second refresh.
+    // Existing records may have phone-photo data URLs, which are far too large to
+    // transfer repeatedly to every staff device.
+    let query = client().from('products')
+      .select('id,name,sku,barcode,zoner,material,selling_price_paise,stock_quantity,archived_at,created_at,updated_at')
+      .order('updated_at', { ascending: false })
     if (!includeArchived) query = query.is('archived_at', null)
     const { data, error } = await query
     if (error) throw new Error(error.message)
     return (data as ProductRow[]).map(mapProduct)
+  },
+  async get(id: string): Promise<Product> {
+    const { data, error } = await client().from('products').select('*').eq('id', id).single()
+    if (error) throw new Error(error.message)
+    return mapProduct(data as ProductRow)
   },
   async create(input: ProductInput): Promise<Product> {
     ensureValid(input)

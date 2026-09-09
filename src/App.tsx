@@ -55,13 +55,16 @@ function PosApp({ email, onSignOut }: { email: string; onSignOut: () => void }) 
   const [products, setProducts] = useState<Product[]>([])
   const [syncError, setSyncError] = useState('')
   const [editing, setEditing] = useState<Product | undefined>()
+  const refreshInProgress = useRef(false)
   const refresh = useCallback(async () => {
+    if (refreshInProgress.current) return
+    refreshInProgress.current = true
     try {
       setProducts(await sharedProductRepository.list(true))
       setSyncError('')
     } catch (reason) {
       setSyncError(reason instanceof Error ? `Could not refresh shared data: ${reason.message}` : 'Could not refresh shared data.')
-    }
+    } finally { refreshInProgress.current = false }
   }, [])
   useEffect(() => {
     const initialRefresh = window.setTimeout(() => { void refresh() }, 0)
@@ -120,8 +123,13 @@ function Products({ products, editing, onEdit, onSave, onCancel }: { products: P
       setError(imported ? `${imported} local product(s) imported into the shared catalogue.` : 'No local products needed importing.')
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not import local products.') } finally { setImporting(false) }
   }
+  const openProduct = async (product: Product) => {
+    if (!product.id) { onEdit(product); return }
+    setError('')
+    try { onEdit(await sharedProductRepository.get(product.id)) } catch (reason) { setError(reason instanceof Error ? `Could not open product: ${reason.message}` : 'Could not open product.') }
+  }
   if (editing !== undefined) return <ProductForm product={editing} onSaved={async () => { await onSave(); onCancel() }} onCancel={onCancel} />
-  return <section className="card product-list"><div className="toolbar"><div><h2>Products</h2><p>{activeProducts.length} active products · shared refresh every 5 seconds</p></div><div className="product-actions"><button className="secondary" onClick={() => void importLocal()} disabled={importing}>{importing ? 'Importing…' : 'Import local products'}</button><button onClick={() => onEdit({ ...blank(), id: '', createdAt: '', updatedAt: '' })}>+ Add product</button></div></div>{error && <p className={error.includes('imported') || error.startsWith('No local') ? 'notice' : 'error'}>{error}</p>}<input aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, zoner, material or barcode" />{filtered.length === 0 ? <p className="empty">No products yet. Upload your first price tag to begin.</p> : <div className="table">{filtered.map((p) => <button className="product-row" key={p.id} onClick={() => onEdit(p)}>{p.imageDataUrl && <img className="thumb" src={p.imageDataUrl} alt="" />}<span><strong>{p.name}</strong><small>{p.zoner || 'No zoner'} · {p.material || 'No material'} · {p.barcode}</small></span><span>{formatInr(p.sellingPricePaise)}<small>Stock: {p.stockQuantity}</small></span></button>)}</div>}<button className="secondary archived-toggle" onClick={() => setShowArchived((show) => !show)}>{showArchived ? 'Hide archived products' : `Archived products (${archivedProducts.length})`}</button>{showArchived && <div className="archived-list">{archivedProducts.length === 0 ? <p className="empty">No archived products.</p> : archivedProducts.map((product) => <div className="product-row" key={product.id}>{product.imageDataUrl && <img className="thumb" src={product.imageDataUrl} alt="" />}<span><strong>{product.name}</strong><small>{product.barcode}</small></span><button onClick={() => void restore(product.id)}>Restore product</button></div>)}</div>}</section>
+  return <section className="card product-list"><div className="toolbar"><div><h2>Products</h2><p>{activeProducts.length} active products · shared refresh every 5 seconds</p></div><div className="product-actions"><button className="secondary" onClick={() => void importLocal()} disabled={importing}>{importing ? 'Importing…' : 'Import local products'}</button><button onClick={() => onEdit({ ...blank(), id: '', createdAt: '', updatedAt: '' })}>+ Add product</button></div></div>{error && <p className={error.includes('imported') || error.startsWith('No local') ? 'notice' : 'error'}>{error}</p>}<input aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, zoner, material or barcode" />{filtered.length === 0 ? <p className="empty">No products yet. Upload your first price tag to begin.</p> : <div className="table">{filtered.map((p) => <button className="product-row" key={p.id} onClick={() => void openProduct(p)}><span><strong>{p.name}</strong><small>{p.zoner || 'No zoner'} · {p.material || 'No material'} · {p.barcode}</small></span><span>{formatInr(p.sellingPricePaise)}<small>Stock: {p.stockQuantity}</small></span></button>)}</div>}<button className="secondary archived-toggle" onClick={() => setShowArchived((show) => !show)}>{showArchived ? 'Hide archived products' : `Archived products (${archivedProducts.length})`}</button>{showArchived && <div className="archived-list">{archivedProducts.length === 0 ? <p className="empty">No archived products.</p> : archivedProducts.map((product) => <div className="product-row" key={product.id}><span><strong>{product.name}</strong><small>{product.barcode}</small></span><button onClick={() => void restore(product.id)}>Restore product</button></div>)}</div>}</section>
 }
 
 function ProductForm({ product, onSaved, onCancel }: { product: Product; onSaved: () => Promise<void>; onCancel: () => void }) {
