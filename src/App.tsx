@@ -11,6 +11,7 @@ import { supabase } from './services/supabaseClient'
 import { SearchableMultiSelect } from './components/SearchableMultiSelect'
 import { ImagePreviewModal } from './components/ImagePreviewModal'
 import { LiveBarcodeScannerModal } from './components/LiveBarcodeScannerModal'
+import boutiqueLogo from './assets/abhijatya-boutique-logo.svg'
 
 type Page = 'Dashboard' | 'Products' | 'Inventory' | 'Sales' | 'Customers' | 'Reports' | 'Settings'
 const pages: Page[] = ['Dashboard', 'Products', 'Inventory', 'Sales', 'Customers', 'Reports', 'Settings']
@@ -73,7 +74,7 @@ function PosApp({ email, onSignOut }: { email: string; onSignOut: () => void }) 
   }, [refresh])
   const activeProducts = useMemo(() => products.filter((product) => !product.archivedAt), [products])
   return <main className="app-shell">
-    <header><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div><div className="staff-actions"><small>{email}</small><button className="secondary" onClick={onSignOut}>Sign out</button><button className="scan" onClick={() => { setPage('Sales'); setEditing(undefined) }}>New bill</button></div></header>
+    <header><div className="brand-identity"><img className="boutique-logo" src={boutiqueLogo} alt="Abhijatya Boutique" /><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div></div><div className="staff-actions"><small>{email}</small><button className="secondary" onClick={onSignOut}>Sign out</button><button className="scan" onClick={() => { setPage('Sales'); setEditing(undefined) }}>New bill</button></div></header>
     <nav>{pages.map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => { setPage(item); setEditing(undefined) }}>{item}</button>)}</nav>
     {syncError && <p className="error">{syncError}</p>}
     {page === 'Dashboard' && <Dashboard products={activeProducts} onProducts={() => setPage('Products')} />}
