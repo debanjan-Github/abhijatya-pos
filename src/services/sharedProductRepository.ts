@@ -40,6 +40,14 @@ export const sharedProductRepository = {
     if (error) throw new Error(error.message)
     return mapProduct(data as ProductRow)
   },
+  async getForSale(id: string): Promise<Product> {
+    const { data, error } = await client().from('products')
+      .select('id,name,sku,barcode,zoner,material,selling_price_paise,stock_quantity,price_tag_image_path,archived_at,created_at,updated_at')
+      .eq('id', id)
+      .single()
+    if (error) throw new Error(error.message)
+    return mapProduct(data as ProductRow)
+  },
   async create(input: ProductInput): Promise<Product> {
     ensureValid(input)
     const { data, error } = await client().rpc('create_product_with_opening_stock', {

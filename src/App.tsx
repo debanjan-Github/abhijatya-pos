@@ -250,6 +250,9 @@ function Billing({ products, onCompleted }: { products: Product[]; onCompleted: 
   const [message, setMessage] = useState('')
   const [reading, setReading] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [manualBarcode, setManualBarcode] = useState('')
+  const [addingBarcode, setAddingBarcode] = useState(false)
+  const [cartPreviewImage, setCartPreviewImage] = useState<string>()
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH')
   const [completing, setCompleting] = useState(false)
   const [lastCompletedSale, setLastCompletedSale] = useState<{ invoiceNumber: string; cart: CartItem[]; total: number }>()
@@ -261,20 +264,31 @@ function Billing({ products, onCompleted }: { products: Product[]; onCompleted: 
     setMessage('')
     return item ? items.map((entry) => entry.product.id === product.id ? { ...entry, quantity: entry.quantity + 1 } : entry) : [...items, { product, quantity: 1 }]
   })
-  const addBarcodeToCart = useCallback((barcode: string) => {
-    const product = products.find((item) => item.barcode.trim().toUpperCase() === barcode.trim().toUpperCase())
-    if (!product) { setMessage(`No saved product matches barcode ${barcode}.`); return }
+  const addBarcodeToCart = useCallback(async (barcode: string) => {
+    const cleanBarcode = barcode.trim()
+    if (!cleanBarcode || addingBarcode) return
+    const product = products.find((item) => item.barcode.trim().toUpperCase() === cleanBarcode.toUpperCase())
+    if (!product) { setMessage(`No saved product matches barcode ${cleanBarcode}.`); return }
     if (product.stockQuantity < 1) { setMessage(`${product.name} is out of stock.`); return }
-    addProduct(product)
-    setMessage(`${product.name} added to the bill.`)
-  }, [products])
+    setAddingBarcode(true)
+    setMessage(`Loading ${product.name}…`)
+    try {
+      // The shared list deliberately omits photos; load only this tag for the bill.
+      const productForSale = await sharedProductRepository.getForSale(product.id)
+      if (productForSale.stockQuantity < 1) { setMessage(`${productForSale.name} is out of stock.`); return }
+      addProduct(productForSale)
+      setManualBarcode('')
+      setScannerOpen(false)
+      setMessage(`${productForSale.name} added to the bill.`)
+    } catch (reason) { setMessage(reason instanceof Error ? `Could not load product: ${reason.message}` : 'Could not load the selected product.') } finally { setAddingBarcode(false) }
+  }, [addingBarcode, products])
   const readTag = async (file?: File) => {
     if (!file) return
     setReading(true); setMessage('Reading price tag…')
     try {
       const tag = await readPriceTag(file)
       if (!tag.barcode) setMessage('No barcode was found. Please take a clearer photo of the tag.')
-      else addBarcodeToCart(tag.barcode)
+      else await addBarcodeToCart(tag.barcode)
     } catch { setMessage('The tag could not be read. Please take a clear, straight photo.') } finally { setReading(false) }
   }
   const changeQuantity = (productId: string, quantity: number) => setCart((items) => quantity < 1 ? items.filter((item) => item.product.id !== productId) : items.map((item) => item.product.id === productId ? { ...item, quantity: Math.min(quantity, item.product.stockQuantity) } : item))
@@ -289,7 +303,7 @@ function Billing({ products, onCompleted }: { products: Product[]; onCompleted: 
       await onCompleted()
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Sale could not be completed.') } finally { setCompleting(false) }
   }
-  return <><section className="billing-layout"><div className="card"><div className="toolbar"><div><p className="eyebrow">FAST BILLING</p><h2>New sale</h2><p>Scan the product barcode to add it instantly. Price-tag photo remains a fallback.</p></div><div className="billing-actions"><button className="scan" onClick={() => setScannerOpen(true)}>Scan barcode</button><button className="secondary" onClick={() => inputRef.current?.click()} disabled={reading}>{reading ? 'Reading tag…' : 'Use tag photo'}</button></div></div><input ref={inputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void readTag(event.target.files?.[0])} />{message && <p className="notice">{message}</p>}<div className="cart-list">{cart.length === 0 ? <p className="empty">Your bill is empty. Scan a barcode to add a saree.</p> : cart.map(({ product, quantity }) => <div className="cart-row" key={product.id}>{product.imageDataUrl && <img className="thumb" src={product.imageDataUrl} alt="" />}<span><strong>{product.name}</strong><small>{product.barcode} · {formatInr(product.sellingPricePaise)}</small></span><div className="quantity"><button onClick={() => changeQuantity(product.id, quantity - 1)} aria-label="Remove one">−</button><strong>{quantity}</strong><button onClick={() => changeQuantity(product.id, quantity + 1)} disabled={quantity >= product.stockQuantity} aria-label="Add one">+</button></div><strong>{formatInr(product.sellingPricePaise * quantity)}</strong></div>)}</div></div><aside className="card bill-summary"><p className="eyebrow">BILL SUMMARY</p><h2>ABHIJATYA</h2><div><span>Items</span><strong>{cart.reduce((sum, item) => sum + item.quantity, 0)}</strong></div><label>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="OTHER">Other</option></select></label><div className="grand-total"><span>Total amount</span><strong>{formatInr(total)}</strong></div><button disabled={!cart.length || completing} onClick={() => void completeSale()}>{completing ? 'Completing sale…' : 'Complete sale'}</button>{lastCompletedSale && <button className="secondary" onClick={() => printReceipt(lastCompletedSale.cart, lastCompletedSale.total, lastCompletedSale.invoiceNumber)}>Print last bill</button>}<p className="printer-note"><strong>PSF-58D status: pending verification.</strong> This creates a 58 mm print-ready receipt using the browser’s print sheet. Direct Bluetooth printing is disabled until Shreyans confirms the iOS SDK/protocol.</p></aside></section>{scannerOpen && <LiveBarcodeScannerModal onDetected={addBarcodeToCart} onClose={() => setScannerOpen(false)} />}</>
+  return <><section className="billing-layout"><div className="card"><div className="toolbar"><div><p className="eyebrow">FAST BILLING</p><h2>New sale</h2><p>Scan the product barcode to add it instantly. Price-tag photo remains a fallback.</p></div><div className="billing-actions"><button className="scan" onClick={() => setScannerOpen(true)} disabled={addingBarcode}>Scan barcode</button><button className="secondary" onClick={() => inputRef.current?.click()} disabled={reading || addingBarcode}>{reading ? 'Reading tag…' : 'Use tag photo'}</button></div></div><form className="manual-barcode" onSubmit={(event) => { event.preventDefault(); void addBarcodeToCart(manualBarcode) }}><label>Enter barcode manually<input value={manualBarcode} onChange={(event) => setManualBarcode(event.target.value)} placeholder="Example: AB00023" autoCapitalize="characters" autoCorrect="off" /></label><button className="scan" type="submit" disabled={!manualBarcode.trim() || addingBarcode}>{addingBarcode ? 'Adding…' : 'Add item'}</button></form><input ref={inputRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void readTag(event.target.files?.[0])} />{message && <p className="notice">{message}</p>}<div className="cart-list">{cart.length === 0 ? <p className="empty">Your bill is empty. Scan or enter a barcode to add a saree.</p> : cart.map(({ product, quantity }) => <div className="cart-row" key={product.id}>{product.priceTagImageDataUrl && <button className="tag-preview-button cart-tag-preview" type="button" onClick={() => setCartPreviewImage(product.priceTagImageDataUrl)} aria-label={`View price tag for ${product.name}`}><img className="thumb" src={product.priceTagImageDataUrl} alt="Price tag" /></button>}<span><strong>{product.name}</strong><small>{product.barcode} · {formatInr(product.sellingPricePaise)}</small></span><div className="quantity"><button onClick={() => changeQuantity(product.id, quantity - 1)} aria-label="Remove one">−</button><strong>{quantity}</strong><button onClick={() => changeQuantity(product.id, quantity + 1)} disabled={quantity >= product.stockQuantity} aria-label="Add one">+</button></div><strong>{formatInr(product.sellingPricePaise * quantity)}</strong></div>)}</div></div><aside className="card bill-summary"><p className="eyebrow">BILL SUMMARY</p><h2>ABHIJATYA</h2><div><span>Items</span><strong>{cart.reduce((sum, item) => sum + item.quantity, 0)}</strong></div><label>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="OTHER">Other</option></select></label><div className="grand-total"><span>Total amount</span><strong>{formatInr(total)}</strong></div><button disabled={!cart.length || completing} onClick={() => void completeSale()}>{completing ? 'Completing sale…' : 'Complete sale'}</button>{lastCompletedSale && <button className="secondary" onClick={() => printReceipt(lastCompletedSale.cart, lastCompletedSale.total, lastCompletedSale.invoiceNumber)}>Print last bill</button>}<p className="printer-note"><strong>PSF-58D status: pending verification.</strong> This creates a 58 mm print-ready receipt using the browser’s print sheet. Direct Bluetooth printing is disabled until Shreyans confirms the iOS SDK/protocol.</p></aside></section>{scannerOpen && <LiveBarcodeScannerModal onDetected={(barcode) => void addBarcodeToCart(barcode)} onClose={() => setScannerOpen(false)} />}<ImagePreviewModal imageUrl={cartPreviewImage} alt="Price-tag photo" onClose={() => setCartPreviewImage(undefined)} /></>
 }
 
 function printReceipt(cart: CartItem[], total: number, invoiceNumber?: string) {
