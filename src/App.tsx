@@ -13,8 +13,8 @@ import { ImagePreviewModal } from './components/ImagePreviewModal'
 import { LiveBarcodeScannerModal } from './components/LiveBarcodeScannerModal'
 import boutiqueLogo from '../LOGO My.png'
 
-type Page = 'Dashboard' | 'Products' | 'Inventory' | 'Sales' | 'Customers' | 'Reports' | 'Settings'
-const pages: Page[] = ['Dashboard', 'Products', 'Inventory', 'Sales', 'Customers', 'Reports', 'Settings']
+type Page = 'Dashboard' | 'Products' | 'Sales' | 'Inventory' | 'Customers' | 'Reports' | 'Settings'
+const pages: Page[] = ['Dashboard', 'Products', 'Sales', 'Inventory', 'Customers', 'Reports', 'Settings']
 const blank = (): ProductInput => ({ name: '', sku: '', barcode: '', zoner: '', material: '', sellingPricePaise: 0, stockQuantity: 1 })
 const ZONERS = [
   'Wedding', 'Bridal', 'Party', 'Festive', 'Puja', 'Haldi', 'Mehendi', 'Sangeet', 'Reception', 'Engagement', 'Office',
@@ -79,8 +79,8 @@ function PosApp({ email, onSignOut }: { email: string; onSignOut: () => void }) 
     {syncError && <p className="error">{syncError}</p>}
     {page === 'Dashboard' && <Dashboard products={activeProducts} onProducts={() => setPage('Products')} />}
     {page === 'Products' && <Products products={products} editing={editing} onEdit={setEditing} onSave={refresh} onCancel={() => setEditing(undefined)} />}
-    {page === 'Inventory' && <Inventory products={activeProducts} onChanged={refresh} />}
     {page === 'Sales' && <Billing products={activeProducts} onCompleted={refresh} />}
+    {page === 'Inventory' && <Inventory products={activeProducts} onChanged={refresh} />}
     {['Customers', 'Reports', 'Settings'].includes(page) && <section className="card"><h2>{page}</h2><p>This section is planned for a later milestone. Product data is ready for it.</p></section>}
   </main>
 }

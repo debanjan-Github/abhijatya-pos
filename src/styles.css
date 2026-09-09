@@ -7,3 +7,4 @@
 .product-actions{display:flex;gap:8px;flex-wrap:wrap}
 .brand-identity{display:flex;align-items:center;gap:28px;min-width:0}.boutique-logo{width:184px;height:160px;flex:0 0 auto;object-fit:contain}
 @media(max-width:640px){header{align-items:flex-start}.brand-identity{gap:10px}.boutique-logo{width:60px;height:60px}}
+@media(max-width:640px){header{display:block}.brand-identity{gap:10px;min-width:0}.brand-identity>div{min-width:0}.brand-identity h1{font-size:1.08rem;letter-spacing:.1em;white-space:nowrap}.brand-identity .eyebrow{font-size:.58rem}.boutique-logo{width:58px;height:58px}.staff-actions{margin-top:10px;justify-content:flex-start}.staff-actions small{display:none}.staff-actions button{flex:1;min-width:0}.staff-actions .scan{max-width:120px}}
