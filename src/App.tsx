@@ -70,7 +70,7 @@ function PosApp({ email, onSignOut }: { email: string; onSignOut: () => void }) 
   }, [refresh])
   const activeProducts = useMemo(() => products.filter((product) => !product.archivedAt), [products])
   return <main className="app-shell">
-    <header><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div><div className="staff-actions"><small>{email}</small><button className="secondary" onClick={onSignOut}>Sign out</button><button className="scan" disabled title="Camera barcode scanning arrives in Milestone 2">⌁ Scan barcode</button></div></header>
+    <header><div><p className="eyebrow">BOUTIQUE POS</p><h1>ABHIJATYA</h1></div><div className="staff-actions"><small>{email}</small><button className="secondary" onClick={onSignOut}>Sign out</button><button className="scan" onClick={() => { setPage('Sales'); setEditing(undefined) }}>New bill</button></div></header>
     <nav>{pages.map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => { setPage(item); setEditing(undefined) }}>{item}</button>)}</nav>
     {syncError && <p className="error">{syncError}</p>}
     {page === 'Dashboard' && <Dashboard products={activeProducts} onProducts={() => setPage('Products')} />}
