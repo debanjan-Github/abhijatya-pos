@@ -10,24 +10,25 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "latest",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
+    "html5-qrcode": "^2.3.8",
     "react": "latest",
     "react-dom": "latest",
     "tesseract.js": "latest",
-    "@supabase/supabase-js": "latest"
+    "typescript": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@eslint/js": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
-    "vitest": "latest",
     "jsdom": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "typescript-eslint": "latest"
+    "typescript-eslint": "latest",
+    "vitest": "latest"
   }
 }

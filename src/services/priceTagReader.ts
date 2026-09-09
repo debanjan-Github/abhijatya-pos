@@ -5,7 +5,7 @@ export interface PriceTagDetails {
   rawText: string
 }
 
-type BarcodeDetection = { rawValue?: string }
+type BarcodeDetection = { rawValue?: string; boundingBox?: { x: number; y: number; width: number; height: number } }
 type BarcodeDetectorConstructor = new (options: { formats: string[] }) => { detect(source: ImageBitmapSource): Promise<BarcodeDetection[]> }
 
 const barcodeFormats = ['code_128', 'ean_13', 'upc_a', 'qr_code']
@@ -52,17 +52,39 @@ export function extractPriceTagDetails(rawText: string, detectedBarcode?: string
   return { barcode, pricePaise: priceFromText(rawText), name: nameFromText(rawText, barcode), rawText }
 }
 
-async function detectBarcode(imageSource: Blob): Promise<string | undefined> {
+interface DetectedBarcode { value: string; boundingBox?: BarcodeDetection['boundingBox'] }
+
+async function detectBarcode(imageSource: Blob): Promise<DetectedBarcode | undefined> {
   const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector
   if (!Detector) return undefined
   const image = await createImageBitmap(imageSource)
   try {
-    const code = (await new Detector({ formats: barcodeFormats }).detect(image)).find((result) => result.rawValue)?.rawValue
-    return code ? normaliseBarcode(code) : undefined
+    const result = (await new Detector({ formats: barcodeFormats }).detect(image)).find((code) => code.rawValue)
+    return result?.rawValue ? { value: normaliseBarcode(result.rawValue), boundingBox: result.boundingBox } : undefined
   } finally { image.close() }
 }
 
-async function rotatedCandidates(file: File): Promise<Blob[]> {
+async function cropToPriceTag(file: Blob, box: NonNullable<BarcodeDetection['boundingBox']>): Promise<Blob> {
+  const image = await createImageBitmap(file)
+  try {
+    const verticalBarcode = box.height > box.width
+    // The barcode sits around the centre of these long, narrow labels. Keep enough
+    // space on both sides for the boutique heading, product name and price line.
+    const width = Math.min(image.width, verticalBarcode ? box.height * 2 : box.width * 2)
+    const height = Math.min(image.height, verticalBarcode ? box.width * 10 : box.height * 10)
+    const left = Math.max(0, Math.min(image.width - width, box.x + box.width / 2 - width / 2))
+    const top = Math.max(0, Math.min(image.height - height, box.y + box.height / 2 - height / 2))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(width)
+    canvas.height = Math.round(height)
+    const context = canvas.getContext('2d')
+    if (!context) return file
+    context.drawImage(image, left, top, width, height, 0, 0, width, height)
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Label crop failed.')), 'image/jpeg', 0.95))
+  } finally { image.close() }
+}
+
+async function rotatedCandidates(file: Blob): Promise<Blob[]> {
   try {
     const image = await createImageBitmap(file)
     const rotations = [0, 90, 270, 180]
@@ -89,11 +111,15 @@ function quality(details: PriceTagDetails): number {
 }
 
 export async function readPriceTag(file: File): Promise<PriceTagDetails> {
-  const candidates = await rotatedCandidates(file)
-  let detectedBarcode: string | undefined
-  for (const candidate of candidates) {
-    detectedBarcode = await detectBarcode(candidate).catch(() => undefined)
-    if (detectedBarcode) break
+  const firstDetection = await detectBarcode(file).catch(() => undefined)
+  const source = firstDetection?.boundingBox ? await cropToPriceTag(file, firstDetection.boundingBox).catch(() => file) : file
+  const candidates = await rotatedCandidates(source)
+  let detectedBarcode = firstDetection?.value
+  if (!detectedBarcode) {
+    for (const candidate of candidates) {
+      const detection = await detectBarcode(candidate).catch(() => undefined)
+      if (detection) { detectedBarcode = detection.value; break }
+    }
   }
   const { recognize } = await import('tesseract.js')
   let best: PriceTagDetails = { rawText: '' }
