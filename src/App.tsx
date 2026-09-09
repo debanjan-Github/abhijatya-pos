@@ -146,7 +146,7 @@ function ProductForm({ product, onSaved, onCancel }: { product: Product; onSaved
     if (!file) return
     if (!file.type.startsWith('image/')) { setError('Please upload an image file.'); return }
     setError(''); setNotice('Reading the price tag…'); setReading(true)
-    const imageDataUrl = await asDataUrl(file).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : 'Photo could not be loaded.'); return undefined })
+    const imageDataUrl = await asOptimisedDataUrl(file, 1600, 0.82).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : 'Photo could not be loaded.'); return undefined })
     if (!imageDataUrl) { setReading(false); return }
     setForm((current) => ({ ...current, priceTagImageDataUrl: imageDataUrl }))
     try {
@@ -182,7 +182,7 @@ function ProductForm({ product, onSaved, onCancel }: { product: Product; onSaved
   const uploadSareePhoto = async (file?: File) => {
     if (!file) return
     if (!file.type.startsWith('image/')) { setError('Please upload an image file.'); return }
-    try { change('imageDataUrl', await asDataUrl(file)); setError('') } catch (reason) { setError(reason instanceof Error ? reason.message : 'Photo could not be loaded.') }
+    try { change('imageDataUrl', await asOptimisedDataUrl(file, 1400, 0.76)); setError('') } catch (reason) { setError(reason instanceof Error ? reason.message : 'Photo could not be loaded.') }
   }
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -211,7 +211,29 @@ function textField<K extends 'name' | 'zoner' | 'material' | 'barcode'>(key: K, 
   }
   return <label>{label}{required && ' *'}<input required={required} value={String(form[key] ?? '')} onChange={(event) => change(key, event.target.value)} /></label>
 }
-function asDataUrl(file: File): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Photo could not be loaded.')); reader.readAsDataURL(file) }) }
+function asOptimisedDataUrl(file: File, maxDimension: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight))
+      const width = Math.max(1, Math.round(image.naturalWidth * scale))
+      const height = Math.max(1, Math.round(image.naturalHeight * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      if (!context) { reject(new Error('Photo compression is unavailable in this browser.')); return }
+      context.drawImage(image, 0, 0, width, height)
+      // JPEG keeps camera photos small enough for reliable Supabase saves while
+      // retaining enough sharpness for price-tag reading.
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Photo could not be loaded. Please use a JPEG or PNG photo.')) }
+    image.src = objectUrl
+  })
+}
 
 function SareePhotoField({ value, onChange }: { value?: string; onChange: (file?: File) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
