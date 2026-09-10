@@ -76,10 +76,19 @@ export const sharedProductRepository = {
     const { error } = await client().from('products').update({ archived_at: null, updated_at: new Date().toISOString() }).eq('id', id)
     if (error) throw new Error(error.message)
   },
+  async permanentlyDeleteArchived(id: string): Promise<void> {
+    const { error } = await client().rpc('permanently_delete_archived_product', { p_product_id: id })
+    if (error) throw new Error(error.message)
+  },
   async adjustStock(id: string, newStock: number, type: Exclude<MovementType, 'SALE'>, notes?: string): Promise<Product> {
     const { data, error } = await client().rpc('adjust_product_stock', { p_product_id: id, p_new_stock: newStock, p_type: type, p_notes: notes ?? null })
     if (error) throw new Error(error.message)
     return mapProduct(data as ProductRow)
+  },
+  async restoreAllStockToOne(): Promise<number> {
+    const { data, error } = await client().rpc('restore_all_product_stock')
+    if (error) throw new Error(error.message)
+    return Number(data ?? 0)
   },
   async movements(productId: string): Promise<InventoryMovement[]> {
     const { data, error } = await client().from('inventory_movements').select('*').eq('product_id', productId).order('created_at', { ascending: false })

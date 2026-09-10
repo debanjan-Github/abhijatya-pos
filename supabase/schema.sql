@@ -36,6 +36,7 @@ create table if not exists public.sales (
   invoice_number text not null unique,
   subtotal_paise bigint not null check (subtotal_paise >= 0),
   grand_total_paise bigint not null check (grand_total_paise >= 0),
+  customer_phone text,
   created_at timestamptz not null default now()
 );
 
@@ -48,6 +49,11 @@ create table if not exists public.sale_items (
   quantity integer not null check (quantity > 0),
   unit_price_paise bigint not null check (unit_price_paise >= 0),
   line_total_paise bigint not null check (line_total_paise >= 0)
+);
+
+create table if not exists public.bill_serial_counter (
+  counter_name text primary key,
+  last_number bigint not null default 0 check (last_number >= 0)
 );
 
 alter table public.products enable row level security;

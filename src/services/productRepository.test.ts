@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { LocalProductRepository } from './productRepository'
 
-const saree = { name: 'Kanjivaram Silk Saree', sku: 'ABH-SIL-0001', barcode: 'ABH000001', sellingPricePaise: 799900, stockQuantity: 1 }
+const saree = { name: 'Kanjivaram Silk Saree', sku: 'AB00001', barcode: 'AB00001', sellingPricePaise: 799900, stockQuantity: 1 }
 
 describe('LocalProductRepository', () => {
   beforeEach(() => localStorage.clear())

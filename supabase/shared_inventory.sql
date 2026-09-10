@@ -68,3 +68,32 @@ revoke all on function public.create_product_with_opening_stock(text, text, text
 revoke all on function public.adjust_product_stock(uuid, integer, text, text) from public;
 grant execute on function public.create_product_with_opening_stock(text, text, text, text, text, bigint, integer, text, text) to authenticated;
 grant execute on function public.adjust_product_stock(uuid, integer, text, text) to authenticated;
+
+-- Allows staff to permanently discard a test product only after it has been
+-- archived and only when it was never included on a completed bill.
+-- Bill history is deliberately never deleted or altered.
+create or replace function public.permanently_delete_archived_product(p_product_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  product_row public.products;
+begin
+  if auth.uid() is null then raise exception 'Staff sign-in required'; end if;
+
+  select * into product_row from public.products where id = p_product_id for update;
+  if not found then raise exception 'Product not found'; end if;
+  if product_row.archived_at is null then raise exception 'Archive the product before permanently deleting it'; end if;
+  if exists (select 1 from public.sale_items where product_id = p_product_id) then
+    raise exception 'This product is on a completed bill and cannot be permanently deleted. Keep it archived.';
+  end if;
+
+  delete from public.inventory_movements where product_id = p_product_id;
+  delete from public.products where id = p_product_id;
+end;
+$$;
+
+revoke all on function public.permanently_delete_archived_product(uuid) from public;
+grant execute on function public.permanently_delete_archived_product(uuid) to authenticated;
