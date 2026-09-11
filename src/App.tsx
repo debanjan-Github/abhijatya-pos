@@ -42,7 +42,20 @@ interface NativeProductActionsPlugin {
   confirmDelete(options: { productName: string; permanent: boolean }): Promise<{ confirmed?: boolean }>
 }
 
+interface NativeBillSharePlugin {
+  sharePdf(options: {
+    invoiceNumber: string
+    dateText: string
+    items: Array<{ name: string; barcode: string; quantity: number; lineTotal: string }>
+    totalText: string
+    paymentMethod: string
+    customerPhone?: string
+    logoDataUrl?: string
+  }): Promise<{ shared?: boolean }>
+}
+
 const NativeProductActions = registerPlugin<NativeProductActionsPlugin>('NativeProductActions')
+const NativeBillShare = registerPlugin<NativeBillSharePlugin>('NativeBillShare')
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -546,20 +559,56 @@ function Billing({ products, onCompleted }: { products: Product[]; onCompleted: 
         <label>Payment method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="OTHER">Other</option></select></label>
         <div className="grand-total"><span>Total amount</span><strong>{formatInr(total)}</strong></div>
         <button disabled={!cart.length || completing || Boolean(customerPhoneError)} onClick={() => void completeSale()}>{completing ? 'Completing sale…' : 'Complete sale'}</button>
-        {lastCompletedSale && <><button className="secondary" onClick={() => requestReceiptPrint(lastCompletedSale)}>Print last bill</button>{lastCompletedSale.customerPhone && <button className="scan" onClick={() => openWhatsAppBill(lastCompletedSale)}>Send bill on WhatsApp</button>}</>}
-        {lastCompletedSale?.customerPhone && <p className="whatsapp-note">Opens WhatsApp Business from 8971616481. Review the bill, then tap Send.</p>}
-        <p className="printer-note"><strong>58 mm receipt:</strong> the Print option opens a receipt sized for 58 mm paper in a browser. Direct Bluetooth PSF-58D printing in the installed iPhone app requires its iOS SDK or BLE command specification; it is not enabled yet.</p>
+        {lastCompletedSale && <><button className="secondary" onClick={() => requestReceiptPrint(lastCompletedSale)}>Print last bill</button>{lastCompletedSale.customerPhone && <><button className="scan" onClick={() => sendTextBillToCustomer(lastCompletedSale)}>Send bill to customer</button><button className="secondary" onClick={() => void sendBillOnWhatsApp(lastCompletedSale)}>Share PDF</button></>}</>}
+        {lastCompletedSale?.customerPhone && <p className="whatsapp-note">Send bill opens the saved customer number directly. Share PDF lets you choose WhatsApp Business and its customer chat.</p>}
       </aside>
     </section>
-    <section className="card saved-bills"><div className="toolbar"><div><p className="eyebrow">BILL HISTORY</p><h2>Saved bills</h2><p>Every completed sale is stored here with its permanent bill number.</p></div><button className="secondary" onClick={() => void refreshBills()}>Refresh bills</button></div>{billsError && <p className="error">{billsError}</p>}{savedBills.length === 0 ? <p className="empty">No completed bills yet.</p> : <div className="table">{savedBills.map((sale) => { const bill = billDetailsFromSavedSale(sale); return <article className="saved-bill-row" key={sale.id}><div><strong>{sale.invoiceNumber}</strong><small>{bill.completedAt.toLocaleString('en-IN')} · {sale.items.reduce((sum, item) => sum + item.quantity, 0)} item(s) · {sale.paymentMethod}</small><small>Customer: {sale.customerPhone ?? 'No mobile number'}</small></div><div className="saved-bill-actions"><strong>{formatInr(sale.totalPaise)}</strong><button className="secondary" onClick={() => openCustomerPhoneEditor(sale)}>Edit customer</button><button className="secondary" onClick={() => requestReceiptPrint(bill)}>Print</button>{sale.customerPhone && <button className="scan" onClick={() => openWhatsAppBill(bill)}>WhatsApp</button>}</div></article> })}</div>}</section>
+    <section className="card saved-bills"><div className="toolbar"><div><p className="eyebrow">BILL HISTORY</p><h2>Saved bills</h2><p>Every completed sale is stored here with its permanent bill number.</p></div><button className="secondary" onClick={() => void refreshBills()}>Refresh bills</button></div>{billsError && <p className="error">{billsError}</p>}{savedBills.length === 0 ? <p className="empty">No completed bills yet.</p> : <div className="table">{savedBills.map((sale) => { const bill = billDetailsFromSavedSale(sale); return <article className="saved-bill-row" key={sale.id}><div><strong>{sale.invoiceNumber}</strong><small>{bill.completedAt.toLocaleString('en-IN')} · {sale.items.reduce((sum, item) => sum + item.quantity, 0)} item(s) · {sale.paymentMethod}</small><small>Customer: {sale.customerPhone ?? 'No mobile number'}</small></div><div className="saved-bill-actions"><strong>{formatInr(sale.totalPaise)}</strong><button className="secondary" onClick={() => openCustomerPhoneEditor(sale)}>Edit customer</button><button className="secondary" onClick={() => requestReceiptPrint(bill)}>Print</button>{sale.customerPhone && <><button className="scan" onClick={() => sendTextBillToCustomer(bill)}>Send to customer</button><button className="secondary" onClick={() => void sendBillOnWhatsApp(bill)}>Share PDF</button></>}</div></article> })}</div>}</section>
     {scannerOpen && <LiveBarcodeScannerModal onDetected={addBarcodeToCart} onClose={() => setScannerOpen(false)} />}
     <ImagePreviewModal imageUrl={cartPreviewImage} alt="Price-tag photo" onClose={() => setCartPreviewImage(undefined)} />
     {editingBill && <div className="dialog-backdrop" role="presentation"><section className="action-menu customer-phone-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-customer-phone-title"><p className="eyebrow">SAVED BILL</p><h2 id="edit-customer-phone-title">Edit customer number</h2><p>{editingBill.invoiceNumber}. Leave this empty to remove the number.</p><label>Customer mobile<input type="tel" inputMode="tel" autoComplete="tel" value={editedCustomerMobile} onChange={(event) => setEditedCustomerMobile(event.target.value)} placeholder="98765 43210" autoFocus /></label>{editedCustomerPhoneError && <p className="field-error" role="alert">{editedCustomerPhoneError}</p>}<div className="dialog-actions"><button className="secondary" onClick={() => setEditingBill(undefined)} disabled={savingCustomerPhone}>Cancel</button><button onClick={() => void saveCustomerPhone()} disabled={savingCustomerPhone || Boolean(editedCustomerPhoneError)}>{savingCustomerPhone ? 'Saving…' : 'Save number'}</button></div></section></div>}
   </>
+
+  async function sendBillOnWhatsApp(sale: BillDetails) {
+    try {
+      const status = await shareWhatsAppBill(sale)
+      if (status) setMessage(status)
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Could not prepare the PDF bill.')
+    }
+  }
+
+  function sendTextBillToCustomer(sale: BillDetails) {
+    try {
+      const status = sendWhatsAppTextBill(sale)
+      if (status) setMessage(status)
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : 'Could not open WhatsApp for this customer.')
+    }
+  }
 }
 
-function openWhatsAppBill(sale: BillDetails) {
+async function shareWhatsAppBill(sale: BillDetails): Promise<string | undefined> {
   if (!sale.customerPhone) return
+  const paymentMethod = sale.paymentMethod === 'CASH' ? 'Cash' : sale.paymentMethod === 'UPI' ? 'UPI' : sale.paymentMethod === 'CARD' ? 'Card' : 'Other'
+  if (Capacitor.isNativePlatform()) {
+    const logoDataUrl = await loadLogoDataUrl()
+    const result = await NativeBillShare.sharePdf({
+      invoiceNumber: sale.invoiceNumber,
+      dateText: sale.completedAt.toLocaleString('en-IN'),
+      items: sale.items.map((item) => ({ name: item.name, barcode: item.barcode, quantity: item.quantity, lineTotal: formatInr(item.lineTotalPaise) })),
+      totalText: formatInr(sale.totalPaise),
+      paymentMethod,
+      customerPhone: sale.customerPhone,
+      logoDataUrl,
+    })
+    return result.shared ? 'PDF bill shared.' : 'PDF bill share was cancelled.'
+  }
+  return 'PDF sharing is available in the installed iPhone app. Use Send to customer for the direct WhatsApp bill.'
+}
+
+function sendWhatsAppTextBill(sale: BillDetails): string | undefined {
+  if (!sale.customerPhone) return 'Add a customer mobile number before sending the bill.'
   const itemLines = sale.items.map((item) => `• ${item.name} × ${item.quantity} — ${formatInr(item.lineTotalPaise)}`)
   const paymentMethod = sale.paymentMethod === 'CASH' ? 'Cash' : sale.paymentMethod === 'UPI' ? 'UPI' : sale.paymentMethod === 'CARD' ? 'Card' : 'Other'
   const message = [
@@ -578,6 +627,21 @@ function openWhatsAppBill(sale: BillDetails) {
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
   const popup = window.open(url, '_blank', 'noopener,noreferrer')
   if (!popup) window.location.assign(url)
+  return `WhatsApp opened for ${sale.customerPhone}. Review the bill, then tap Send.`
+}
+
+async function loadLogoDataUrl(): Promise<string | undefined> {
+  try {
+    const response = await fetch(boutiqueLogo)
+    if (!response.ok) return undefined
+    const blob = await response.blob()
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Logo could not be loaded.'))
+      reader.onerror = () => reject(new Error('Logo could not be loaded.'))
+      reader.readAsDataURL(blob)
+    })
+  } catch { return undefined }
 }
 
 function printReceipt(sale: BillDetails): string | undefined {
@@ -586,9 +650,9 @@ function printReceipt(sale: BillDetails): string | undefined {
   if (!receipt) return 'The receipt window was blocked. Allow pop-ups for this site, then try Print again.'
   const rows = sale.items.map((item) => `<tr><td>${escapeHtml(item.name)}<br><small>${escapeHtml(item.barcode)} × ${item.quantity}</small></td><td>₹${(item.lineTotalPaise / 100).toLocaleString('en-IN')}</td></tr>`).join('')
   const paymentMethod = sale.paymentMethod === 'CASH' ? 'Cash' : sale.paymentMethod === 'UPI' ? 'UPI' : sale.paymentMethod === 'CARD' ? 'Card' : 'Other'
-  receipt.document.write(`<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:11px}h1{text-align:center;font-size:17px;margin:0}p{text-align:center;margin:4px 0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:9px}</style><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString('en-IN')}</p><table>${rows}</table><p class="total">Total: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p>`)
+  const logoUrl = new URL(boutiqueLogo, window.location.href).href
+  receipt.document.write(`<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:11px}h1{text-align:center;font-size:17px;margin:0}.logo{display:block;width:22mm;height:22mm;object-fit:contain;margin:0 auto 2mm}p{text-align:center;margin:4px 0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:9px}</style><img id="boutique-logo" class="logo" src="${escapeHtml(logoUrl)}" alt="Abhijatya Boutique"><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString('en-IN')}</p><table>${rows}</table><p class="total">Total: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p><script>const printReceipt=()=>setTimeout(()=>{window.focus();window.print()},80);const logo=document.getElementById('boutique-logo');if(logo.complete)printReceipt();else{logo.addEventListener('load',printReceipt,{once:true});logo.addEventListener('error',printReceipt,{once:true})}</script>`)
   receipt.document.close()
-  window.setTimeout(() => { receipt.focus(); receipt.print() }, 150)
   return undefined
 }
 function escapeHtml(value: string) { return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character] ?? character) }
