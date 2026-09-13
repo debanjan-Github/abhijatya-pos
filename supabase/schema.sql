@@ -36,6 +36,7 @@ create table if not exists public.sales (
   invoice_number text not null unique,
   subtotal_paise bigint not null check (subtotal_paise >= 0),
   grand_total_paise bigint not null check (grand_total_paise >= 0),
+  discount_paise bigint not null default 0 check (discount_paise >= 0),
   customer_phone text,
   created_at timestamptz not null default now()
 );
@@ -48,7 +49,8 @@ create table if not exists public.sale_items (
   barcode_snapshot text not null,
   quantity integer not null check (quantity > 0),
   unit_price_paise bigint not null check (unit_price_paise >= 0),
-  line_total_paise bigint not null check (line_total_paise >= 0)
+  line_total_paise bigint not null check (line_total_paise >= 0),
+  discount_paise bigint not null default 0 check (discount_paise >= 0)
 );
 
 create table if not exists public.bill_serial_counter (

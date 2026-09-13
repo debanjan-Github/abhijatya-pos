@@ -17,6 +17,7 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
     private var recentlyScanned: [String: Date] = [:]
     private weak var statusLabel: UILabel?
     private weak var statusBackground: UIVisualEffectView?
+    private weak var closeButton: UIButton?
 
     @objc func start(_ call: CAPPluginCall) {
         DispatchQueue.main.async { [weak self] in
@@ -86,6 +87,7 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
         recentlyScanned.removeAll()
         statusLabel = nil
         statusBackground = nil
+        closeButton = nil
     }
 
     @objc func setStatus(_ call: CAPPluginCall) {
@@ -107,6 +109,7 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
             self.scanner = nil
             self.statusLabel = nil
             self.statusBackground = nil
+            self.closeButton = nil
             if #available(iOS 16.0, *) {
                 scanner.stopScanning()
             }
@@ -130,9 +133,22 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = "Camera is ready. Scan the first barcode."
 
+        let closeButton = UIButton(type: .system)
+        closeButton.setTitle("Close", for: .normal)
+        closeButton.setTitleColor(.white, for: .normal)
+        closeButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        closeButton.backgroundColor = UIColor.black.withAlphaComponent(0.58)
+        closeButton.layer.cornerRadius = 12
+        closeButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.addTarget(self, action: #selector(closeScanner), for: .touchUpInside)
+
         scanner.view.addSubview(background)
         background.contentView.addSubview(label)
+        scanner.view.addSubview(closeButton)
         NSLayoutConstraint.activate([
+            closeButton.trailingAnchor.constraint(equalTo: scanner.view.safeAreaLayoutGuide.trailingAnchor, constant: -22),
+            closeButton.topAnchor.constraint(equalTo: scanner.view.safeAreaLayoutGuide.topAnchor, constant: 18),
             background.leadingAnchor.constraint(equalTo: scanner.view.safeAreaLayoutGuide.leadingAnchor, constant: 22),
             background.trailingAnchor.constraint(equalTo: scanner.view.safeAreaLayoutGuide.trailingAnchor, constant: -22),
             background.bottomAnchor.constraint(equalTo: scanner.view.safeAreaLayoutGuide.bottomAnchor, constant: -28),
@@ -143,6 +159,14 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
         ])
         statusLabel = label
         statusBackground = background
+        self.closeButton = closeButton
+    }
+
+    @objc private func closeScanner() {
+        guard let scanner else { return }
+        self.scanner = nil
+        scanner.stopScanning()
+        scanner.dismiss(animated: true)
     }
 
     private func updateStatus(_ text: String, tone: String) {
