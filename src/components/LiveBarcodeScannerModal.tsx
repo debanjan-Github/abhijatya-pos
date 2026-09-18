@@ -16,7 +16,7 @@ interface NativeBarcodeScannerPlugin {
   start(): Promise<void>
   stop(): Promise<void>
   setStatus(options: ScannerFeedback): Promise<void>
-  addListener(eventName: 'barcodeScanned', listenerFunc: (event: { barcode?: string }) => void): Promise<PluginListenerHandle>
+  addListener(eventName: 'barcodeScanned' | 'scannerClosed', listenerFunc: (event: { barcode?: string }) => void): Promise<PluginListenerHandle>
 }
 
 const NativeBarcodeScanner = registerPlugin<NativeBarcodeScannerPlugin>('NativeBarcodeScanner')
@@ -33,6 +33,7 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
   const scannerId = useId().replaceAll(':', '')
   const scannerRef = useRef<Html5QrcodeType | undefined>(undefined)
   const onDetectedRef = useRef(onDetected)
+  const onCloseRef = useRef(onClose)
   const recentlyReadRef = useRef(new Map<string, number>())
   const scanQueueRef = useRef(Promise.resolve())
   const startingRef = useRef(false)
@@ -42,14 +43,26 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
   const [feedback, setFeedback] = useState<ScannerFeedback>({ message: 'Camera is ready. Scan the first barcode.', tone: 'added' })
 
   useEffect(() => { onDetectedRef.current = onDetected }, [onDetected])
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
 
   const stopScanner = useCallback(async () => {
     startedRef.current = false
     const scanner = scannerRef.current
     scannerRef.current = undefined
     if (!scanner) return
-    await scanner.stop().catch(() => undefined)
-    scanner.clear()
+    // html5-qrcode throws synchronously if startup failed before its scanning
+    // state was entered. Cleanup must not replace the actual Android camera
+    // error with "scanner is not running or paused".
+    try {
+      await scanner.stop()
+    } catch {
+      // A scanner that never started has nothing to stop.
+    }
+    try {
+      scanner.clear()
+    } catch {
+      // The preview may already have been removed by the failed startup.
+    }
   }, [])
 
   const showFeedback = useCallback(async (nextFeedback: ScannerFeedback) => {
@@ -100,14 +113,11 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
       })
       scannerRef.current = scanner
 
-      // iOS is more reliable with the detected rear-camera ID. This request is
-      // deliberately made from the user's Start camera tap.
-      const cameras = await Html5Qrcode.getCameras()
-      if (!cameras.length) throw new Error('No camera found')
-      const rearCamera = cameras.find((camera) => /back|rear|environment/i.test(camera.label)) ?? cameras[cameras.length - 1]
-
+      // Asking for a stream directly triggers the browser permission prompt.
+      // On macOS, getCameras()/enumerateDevices can be empty until after that
+      // permission exists, which previously made Scan barcode look unresponsive.
       await scanner.start(
-        rearCamera.id,
+        { facingMode: { ideal: 'environment' } },
         {
           fps: 10,
           qrbox: { width: 300, height: 150 },
@@ -137,11 +147,13 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
 
   useEffect(() => {
     let active = true
-    let nativeListener: PluginListenerHandle | undefined
+    let nativeBarcodeListener: PluginListenerHandle | undefined
+    let nativeCloseListener: PluginListenerHandle | undefined
     const startImmediately = async () => {
       try {
         if (Capacitor.isNativePlatform()) {
-          nativeListener = await NativeBarcodeScanner.addListener('barcodeScanned', ({ barcode }) => { if (active && barcode) handleDetected(barcode) })
+          nativeBarcodeListener = await NativeBarcodeScanner.addListener('barcodeScanned', ({ barcode }) => { if (active && barcode) handleDetected(barcode) })
+          nativeCloseListener = await NativeBarcodeScanner.addListener('scannerClosed', () => { if (active) onCloseRef.current() })
         }
         if (active) await startScanner()
       } catch (startError) {
@@ -151,7 +163,8 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
     void startImmediately()
     return () => {
       active = false
-      void nativeListener?.remove()
+      void nativeBarcodeListener?.remove()
+      void nativeCloseListener?.remove()
       void stopScanner()
       if (Capacitor.isNativePlatform()) void NativeBarcodeScanner.stop().catch(() => undefined)
     }
@@ -163,14 +176,13 @@ export function LiveBarcodeScannerModal({ onDetected, onClose }: LiveBarcodeScan
     onClose()
   }
 
-  return <div className="scanner-backdrop" role="presentation">
-    <section className="scanner-modal" role="dialog" aria-modal="true" aria-label="Scan barcode">
-      <div className="scanner-header"><div><p className="eyebrow">LIVE SCANNER</p><h2>Point at the barcode</h2><p>Keep scanning — every new barcode is added automatically.</p></div><button className="secondary" type="button" onClick={close}>Close</button></div>
-      {!Capacitor.isNativePlatform() && <div className="scanner-frame" id={scannerId} />}
-      {starting && <p className="notice">Starting camera…</p>}
-      {error && <p className="error">{error}</p>}
-      {!Capacitor.isNativePlatform() && <p className={`scan-feedback ${feedback.tone}`}>{feedback.message}</p>}
-      <p className="scanner-help">{Capacitor.isNativePlatform() ? 'The installed app uses the iPhone’s native scanner. Keep the barcode flat and well lit.' : 'Camera starts automatically. Keep the label steady inside the frame. Camera scanning uses no AI credits.'}</p>
+  if (Capacitor.isNativePlatform()) return null
+
+  return <div className="scanner-backdrop scanner-fullscreen" role="presentation">
+    <section className="scanner-modal scanner-fullscreen-modal" role="dialog" aria-modal="true" aria-label="Scan barcode">
+      <div className="scanner-frame scanner-fullscreen-frame" id={scannerId} />
+      <div className="scanner-fullscreen-header"><div><p className="eyebrow">LIVE SCANNER</p><strong>Point at the barcode</strong><small>Keep scanning — each saree is added automatically.</small></div><button className="secondary" type="button" onClick={close}>Close</button></div>
+      <div className="scanner-fullscreen-status">{starting && <p className="notice">Starting camera…</p>}{error && <p className="error">{error}</p>}{!starting && !error && <p className={`scan-feedback ${feedback.tone}`}>{feedback.message}</p>}</div>
     </section>
   </div>
 }

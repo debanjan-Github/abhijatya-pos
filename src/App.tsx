@@ -18,9 +18,13 @@ import { importLocalProducts } from "./services/importLocalProducts";
 import {
   completeSharedSale,
   countSharedSales,
+  listCustomerProfiles,
   listSharedSales,
+  updateCustomerProfile,
+  updateCompletedSharedSale,
   updateSharedSaleCustomerPhone,
   type PaymentMethod,
+  type CustomerProfile,
   type SavedSale,
 } from "./services/sharedSalesRepository";
 import { readPriceTag } from "./services/priceTagReader";
@@ -51,6 +55,7 @@ const pages: Page[] = [
   "Reports",
   "Settings",
 ];
+const BUSINESS_CONTACT = "Contact us: +91-8971616481";
 const blank = (): ProductInput => ({
   name: "",
   sku: "",
@@ -200,12 +205,23 @@ interface NativeBillSharePlugin {
       barcode: string;
       quantity: number;
       lineTotal: string;
+      itemDiscountText?: string;
     }>;
     totalText: string;
+    discountOnTotalText?: string;
+    businessContactText: string;
     paymentMethod: string;
     customerPhone?: string;
     logoDataUrl?: string;
   }): Promise<{ shared?: boolean }>;
+}
+
+interface NativeContactPickerPlugin {
+  pickPhone(): Promise<{
+    phone?: string;
+    name?: string;
+    cancelled?: boolean;
+  }>;
 }
 
 const NativeProductActions = registerPlugin<NativeProductActionsPlugin>(
@@ -213,6 +229,8 @@ const NativeProductActions = registerPlugin<NativeProductActionsPlugin>(
 );
 const NativeBillShare =
   registerPlugin<NativeBillSharePlugin>("NativeBillShare");
+const NativeContactPicker =
+  registerPlugin<NativeContactPickerPlugin>("NativeContactPicker");
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -268,6 +286,7 @@ function PosApp({
 }) {
   const [page, setPage] = useState<Page>("Dashboard");
   const [products, setProducts] = useState<Product[]>([]);
+  const [salesRefreshToken, setSalesRefreshToken] = useState(0);
   const [syncError, setSyncError] = useState("");
   const [editing, setEditing] = useState<Product | undefined>();
   const refreshInProgress = useRef(false);
@@ -303,6 +322,10 @@ function PosApp({
     () => products.filter((product) => !product.archivedAt),
     [products],
   );
+  const refreshAfterSale = useCallback(async () => {
+    await refresh();
+    setSalesRefreshToken((current) => current + 1);
+  }, [refresh]);
   return (
     <main className="app-shell">
       <header>
@@ -352,6 +375,7 @@ function PosApp({
         <Dashboard
           products={activeProducts}
           onProducts={() => setPage("Products")}
+          salesRefreshToken={salesRefreshToken}
         />
       )}
       {page === "Products" && (
@@ -364,12 +388,15 @@ function PosApp({
         />
       )}
       {page === "Sales" && (
-        <Billing products={activeProducts} onCompleted={refresh} />
+        <Billing products={activeProducts} onCompleted={refreshAfterSale} />
       )}
       {page === "Inventory" && (
         <Inventory products={activeProducts} onChanged={refresh} />
       )}
-      {["Customers", "Reports", "Settings"].includes(page) && (
+      {page === "Customers" && (
+        <Customers salesRefreshToken={salesRefreshToken} />
+      )}
+      {["Reports", "Settings"].includes(page) && (
         <section className="card">
           <h2>{page}</h2>
           <p>
@@ -439,39 +466,78 @@ function StaffSignIn() {
   );
 }
 
+function localDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function Dashboard({
   products,
   onProducts,
+  salesRefreshToken,
 }: {
   products: Product[];
   onProducts: () => void;
+  salesRefreshToken: number;
 }) {
-  const [todaySales, setTodaySales] = useState<SavedSale[]>([]);
-  useEffect(() => {
-    let active = true;
-    void listSharedSales(1000)
-      .then((sales) => {
-        if (active) {
-          const today = new Date().toLocaleDateString("en-IN");
-          setTodaySales(
-            sales.filter(
-              (sale) =>
-                new Date(sale.createdAt).toLocaleDateString("en-IN") === today,
-            ),
-          );
-        }
-      })
-      .catch(() => {
-        if (active) setTodaySales([]);
-      });
-    return () => {
-      active = false;
-    };
+  const [sales, setSales] = useState<SavedSale[]>([]);
+  const [salesPeriod, setSalesPeriod] = useState<"TODAY" | "DATE" | "ALL">(
+    "TODAY",
+  );
+  const [selectedSalesDate, setSelectedSalesDate] = useState(() =>
+    localDateInputValue(new Date()),
+  );
+  const refreshSales = useCallback(async () => {
+    try {
+      setSales(await listSharedSales(1000));
+    } catch {
+      setSales([]);
+    }
   }, []);
-  const todayTotalPaise = todaySales.reduce(
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => {
+      void refreshSales();
+    }, 0);
+    const interval = window.setInterval(() => {
+      void refreshSales();
+    }, 5000);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+    };
+  }, [refreshSales, salesRefreshToken]);
+  const activeSalesDate =
+    salesPeriod === "TODAY"
+      ? localDateInputValue(new Date())
+      : selectedSalesDate;
+  const displayedSales =
+    salesPeriod === "ALL"
+      ? sales
+      : sales.filter(
+          (sale) => localDateInputValue(new Date(sale.createdAt)) === activeSalesDate,
+        );
+  const displayedTotalPaise = displayedSales.reduce(
     (total, sale) => total + sale.totalPaise,
     0,
   );
+  const periodDateText = new Date(`${activeSalesDate}T12:00:00`).toLocaleDateString(
+    "en-IN",
+    { day: "numeric", month: "short", year: "numeric" },
+  );
+  const salesMetricLabel =
+    salesPeriod === "ALL"
+      ? "Total sales"
+      : salesPeriod === "TODAY"
+        ? "Today’s sales"
+        : `Sales · ${periodDateText}`;
+  const billsMetricLabel =
+    salesPeriod === "ALL"
+      ? "Total bills"
+      : salesPeriod === "TODAY"
+        ? "Bills today"
+        : `Bills · ${periodDateText}`;
   return (
     <>
       <section className="hero">
@@ -485,9 +551,40 @@ function Dashboard({
           <button onClick={onProducts}>Add a product</button>
         </div>
       </section>
+      <section className="card dashboard-sales-filter">
+        <p className="eyebrow">SALES OVERVIEW</p>
+        <div className="dashboard-sales-controls">
+          <label>
+            Show sales
+            <select
+              value={salesPeriod}
+              onChange={(event) =>
+                setSalesPeriod(
+                  event.target.value as "TODAY" | "DATE" | "ALL",
+                )
+              }
+            >
+              <option value="TODAY">Today</option>
+              <option value="DATE">Choose a day</option>
+              <option value="ALL">All-time</option>
+            </select>
+          </label>
+          {salesPeriod === "DATE" && (
+            <label>
+              Sales date
+              <input
+                type="date"
+                value={selectedSalesDate}
+                max={localDateInputValue(new Date())}
+                onChange={(event) => setSelectedSalesDate(event.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      </section>
       <section className="metrics">
-        <Metric label="Today’s sales" value={formatInr(todayTotalPaise)} />
-        <Metric label="Bills today" value={String(todaySales.length)} />
+        <Metric label={salesMetricLabel} value={formatInr(displayedTotalPaise)} />
+        <Metric label={billsMetricLabel} value={String(displayedSales.length)} />
         <Metric label="Products" value={String(products.length)} />
         <Metric
           label="Items in stock"
@@ -505,6 +602,296 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+interface CustomerSummary {
+  phone: string;
+  bills: SavedSale[];
+  totalPaise: number;
+  lastPurchaseAt: Date;
+  profile: CustomerProfile;
+}
+
+function Customers({ salesRefreshToken }: { salesRefreshToken: number }) {
+  const [sales, setSales] = useState<SavedSale[]>([]);
+  const [profiles, setProfiles] = useState<CustomerProfile[]>([]);
+  const [query, setQuery] = useState("");
+  const [customerPage, setCustomerPage] = useState(1);
+  const [expandedPhones, setExpandedPhones] = useState<Set<string>>(new Set());
+  const [savingProfilePhone, setSavingProfilePhone] = useState<string>();
+  const [customerProfilesAvailable, setCustomerProfilesAvailable] = useState(false);
+  const [error, setError] = useState("");
+  const refreshCustomers = useCallback(async () => {
+    try {
+      const nextSales = await listSharedSales(1000);
+      setSales(nextSales);
+      setCustomerPage(1);
+      try {
+        setProfiles(await listCustomerProfiles());
+        setCustomerProfilesAvailable(true);
+        setError("");
+      } catch {
+        // Existing bill-based customer history remains useful even before the
+        // one-time customer-profile SQL migration has been applied.
+        setProfiles([]);
+        setCustomerProfilesAvailable(false);
+        setError(
+          "Customer names and isAPT require the latest shared_sales.sql to be run in Supabase SQL Editor.",
+        );
+      }
+    } catch (reason) {
+      setCustomerProfilesAvailable(false);
+      setError(
+        reason instanceof Error
+          ? `Could not load customers: ${reason.message}`
+          : "Could not load customers.",
+      );
+    }
+  }, []);
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => {
+      void refreshCustomers();
+    }, 0);
+    const interval = window.setInterval(() => {
+      void refreshCustomers();
+    }, 5000);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+    };
+  }, [refreshCustomers, salesRefreshToken]);
+
+  const customers = useMemo(() => {
+    const profilesByPhone = new Map(
+      profiles.map((profile) => [profile.phone, profile]),
+    );
+    const byPhone = new Map<string, SavedSale[]>();
+    for (const sale of sales) {
+      if (!sale.customerPhone) continue;
+      const customerSales = byPhone.get(sale.customerPhone) ?? [];
+      customerSales.push(sale);
+      byPhone.set(sale.customerPhone, customerSales);
+    }
+    return Array.from(byPhone, ([phone, bills]): CustomerSummary => ({
+      phone,
+      bills: bills.sort(
+        (first, second) =>
+          new Date(second.createdAt).getTime() -
+          new Date(first.createdAt).getTime(),
+      ),
+      totalPaise: bills.reduce((total, sale) => total + sale.totalPaise, 0),
+      lastPurchaseAt: new Date(
+        Math.max(...bills.map((sale) => new Date(sale.createdAt).getTime())),
+      ),
+      profile: profilesByPhone.get(phone) ?? {
+        phone,
+        name: undefined,
+        isApt: false,
+      },
+    })).sort(
+      (first, second) =>
+        second.lastPurchaseAt.getTime() - first.lastPurchaseAt.getTime(),
+    );
+  }, [profiles, sales]);
+  const visibleCustomers = customers.filter((customer) =>
+    customer.phone.replace(/\D/g, "").includes(query.replace(/\D/g, "")),
+  );
+  const customerPageCount = Math.max(
+    1,
+    Math.ceil(visibleCustomers.length / 10),
+  );
+  const currentCustomerPage = Math.min(customerPage, customerPageCount);
+  const paginatedCustomers = visibleCustomers.slice(
+    (currentCustomerPage - 1) * 10,
+    currentCustomerPage * 10,
+  );
+  const toggleCustomerPurchases = (phone: string) => {
+    setExpandedPhones((current) => {
+      const next = new Set(current);
+      if (next.has(phone)) next.delete(phone);
+      else next.add(phone);
+      return next;
+    });
+  };
+  const saveCustomerProfile = async (
+    customer: CustomerSummary,
+    name: string,
+    isApt: boolean,
+  ) => {
+    if (!customerProfilesAvailable) return;
+    const profile = { phone: customer.phone, name: name.trim() || undefined, isApt };
+    setSavingProfilePhone(customer.phone);
+    setProfiles((current) => {
+      const next = current.filter((item) => item.phone !== customer.phone);
+      return [...next, profile];
+    });
+    try {
+      await updateCustomerProfile(profile);
+      setError("");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? `Could not save customer details: ${reason.message}`
+          : "Could not save customer details.",
+      );
+      await refreshCustomers();
+    } finally {
+      setSavingProfilePhone(undefined);
+    }
+  };
+  return (
+    <section className="card customers-page">
+      <div className="toolbar">
+        <div>
+          <p className="eyebrow">CUSTOMER DIRECTORY</p>
+          <h2>Customers</h2>
+          <p>
+            {customers.length} customer{customers.length === 1 ? "" : "s"} from
+            saved bills.
+          </p>
+        </div>
+        <button className="secondary" onClick={() => void refreshCustomers()}>
+          Refresh customers
+        </button>
+      </div>
+      <label className="customer-search">
+        Find by mobile number
+        <input
+          type="tel"
+          inputMode="tel"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setCustomerPage(1);
+          }}
+          placeholder="Search customer mobile"
+        />
+      </label>
+      {error && <p className="error">{error}</p>}
+      {visibleCustomers.length === 0 ? (
+        <p className="empty">
+          {customers.length
+            ? "No customer matches that mobile number."
+            : "Customers appear here once a bill has a saved mobile number."}
+        </p>
+      ) : (
+        <div className="customer-list">
+          {paginatedCustomers.map((customer) => {
+            const expanded = expandedPhones.has(customer.phone);
+            return (
+              <article className="customer-row" key={customer.phone}>
+                <div className="customer-summary">
+                  <strong>{customer.phone}</strong>
+                  <label className="customer-name-field">
+                    Customer name <small>(optional)</small>
+                    <input
+                      key={`${customer.phone}-${customer.profile.name ?? ""}`}
+                      defaultValue={customer.profile.name ?? ""}
+                      placeholder="Add customer name"
+                      disabled={!customerProfilesAvailable}
+                      onBlur={(event) => {
+                        if (event.target.value.trim() !== (customer.profile.name ?? "")) {
+                          void saveCustomerProfile(
+                            customer,
+                            event.target.value,
+                            customer.profile.isApt,
+                          );
+                        }
+                      }}
+                    />
+                  </label>
+                  <small>
+                    {customer.bills.length} bill{customer.bills.length === 1 ? "" : "s"}
+                    {" · "}Last purchase {customer.lastPurchaseAt.toLocaleDateString("en-IN")}
+                  </small>
+                </div>
+                <div className="customer-actions">
+                  <strong>{formatInr(customer.totalPaise)}</strong>
+                  <label className="customer-apt-toggle">
+                    <input
+                      type="checkbox"
+                      checked={customer.profile.isApt}
+                      disabled={
+                        !customerProfilesAvailable ||
+                        savingProfilePhone === customer.phone
+                      }
+                      onChange={(event) =>
+                        void saveCustomerProfile(
+                          customer,
+                          customer.profile.name ?? "",
+                          event.target.checked,
+                        )
+                      }
+                    />
+                    isAPT
+                  </label>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => toggleCustomerPurchases(customer.phone)}
+                  >
+                    {expanded ? "Hide purchases" : "View purchases"}
+                  </button>
+                  <button
+                    className="scan"
+                    type="button"
+                    onClick={() => openWhatsAppCustomer(customer.phone)}
+                  >
+                    WhatsApp
+                  </button>
+                </div>
+                {expanded && (
+                  <div className="customer-purchases">
+                    {customer.bills.map((sale) => (
+                      <article className="customer-bill" key={sale.id}>
+                        <div>
+                          <strong>{sale.invoiceNumber}</strong>
+                          <small>
+                            {new Date(sale.createdAt).toLocaleString("en-IN")} · {sale.paymentMethod}
+                          </small>
+                        </div>
+                        <strong>{formatInr(sale.totalPaise)}</strong>
+                        <ul>
+                          {sale.items.map((item) => (
+                            <li key={`${sale.id}-${item.productId}`}>
+                              {item.name} · {item.barcode} × {item.quantity} — {formatInr(item.lineTotalPaise)}
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      {visibleCustomers.length > 0 && customerPageCount > 1 && (
+        <nav className="pagination" aria-label="Customers pagination">
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => setCustomerPage(currentCustomerPage - 1)}
+            disabled={currentCustomerPage === 1}
+          >
+            Previous
+          </button>
+          <span>
+            Page {currentCustomerPage} of {customerPageCount}
+          </span>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => setCustomerPage(currentCustomerPage + 1)}
+            disabled={currentCustomerPage === customerPageCount}
+          >
+            Next
+          </button>
+        </nav>
+      )}
+    </section>
   );
 }
 
@@ -1681,6 +2068,9 @@ interface CartItem {
   product: Product;
   quantity: number;
   discount: DiscountInput;
+  // Saved bills retain their originally billed price when edited. New items
+  // continue to use the product's current selling price.
+  unitPricePaise?: number;
 }
 interface ReceiptItem {
   name: string;
@@ -1694,32 +2084,38 @@ interface BillDetails {
   invoiceNumber: string;
   items: ReceiptItem[];
   totalPaise: number;
-  discountPaise?: number;
+  totalDiscountPaise?: number;
   paymentMethod: PaymentMethod;
   customerPhone?: string;
   completedAt: Date;
 }
 
+const cartItemUnitPrice = (item: CartItem) =>
+  item.unitPricePaise ?? item.product.sellingPricePaise;
+
 const receiptItemsFromCart = (cart: CartItem[]): ReceiptItem[] =>
-  cart.map(({ product, quantity, discount }) => ({
-    name: product.name,
-    barcode: product.barcode,
-    quantity,
-    unitPricePaise: product.sellingPricePaise,
-    lineTotalPaise: calculateNetPaise(
-      product.sellingPricePaise * quantity,
-      discount,
-    ),
-    discountPaise: calculateDiscountPaise(
-      product.sellingPricePaise * quantity,
-      discount,
-    ),
-  }));
+  cart.map((item) => {
+    const unitPricePaise = cartItemUnitPrice(item);
+    return {
+      name: item.product.name,
+      barcode: item.product.barcode,
+      quantity: item.quantity,
+      unitPricePaise,
+      lineTotalPaise: calculateNetPaise(
+        unitPricePaise * item.quantity,
+        item.discount,
+      ),
+      discountPaise: calculateDiscountPaise(
+        unitPricePaise * item.quantity,
+        item.discount,
+      ),
+    };
+  });
 const billDetailsFromSavedSale = (sale: SavedSale): BillDetails => ({
   invoiceNumber: sale.invoiceNumber,
   items: sale.items,
   totalPaise: sale.totalPaise,
-  discountPaise: sale.discountPaise,
+  totalDiscountPaise: sale.discountPaise,
   paymentMethod: sale.paymentMethod,
   customerPhone: sale.customerPhone,
   completedAt: new Date(sale.createdAt),
@@ -1792,9 +2188,11 @@ function Billing({
   const [message, setMessage] = useState("");
   const [reading, setReading] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerSession, setScannerSession] = useState(0);
   const [manualBarcode, setManualBarcode] = useState("");
   const [cartPreviewImage, setCartPreviewImage] = useState<string>();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [customerName, setCustomerName] = useState("");
   const [totalDiscount, setTotalDiscount] = useState<DiscountInput>({
     type: "AMOUNT",
     value: 0,
@@ -1816,18 +2214,34 @@ function Billing({
   const [editingBill, setEditingBill] = useState<SavedSale>();
   const [editedCustomerMobile, setEditedCustomerMobile] = useState("");
   const [savingCustomerPhone, setSavingCustomerPhone] = useState(false);
+  const [billEditCandidate, setBillEditCandidate] = useState<SavedSale>();
+  const [billEditPin, setBillEditPin] = useState("");
+  const [billEditPinError, setBillEditPinError] = useState("");
+  const [unlockingBillEdit, setUnlockingBillEdit] = useState(false);
+  const [saleBeingEdited, setSaleBeingEdited] = useState<SavedSale>();
   const inputRef = useRef<HTMLInputElement>(null);
+  const billEditorRef = useRef<HTMLDivElement>(null);
   const recentlyAddedBarcodeRef = useRef(new Map<string, number>());
   const cartRef = useRef<CartItem[]>([]);
+  useEffect(() => {
+    if (!saleBeingEdited) return;
+    const animationFrame = window.requestAnimationFrame(() => {
+      billEditorRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [saleBeingEdited]);
   const subtotal = cart.reduce(
-    (sum, item) => sum + item.product.sellingPricePaise * item.quantity,
+    (sum, item) => sum + cartItemUnitPrice(item) * item.quantity,
     0,
   );
   const itemDiscountTotal = cart.reduce(
     (sum, item) =>
       sum +
       calculateDiscountPaise(
-        item.product.sellingPricePaise * item.quantity,
+        cartItemUnitPrice(item) * item.quantity,
         item.discount,
       ),
     0,
@@ -1854,6 +2268,33 @@ function Billing({
     editedCustomerMobile.trim() && !editedCustomerPhone
       ? "Enter a valid 10-digit Indian mobile number."
       : undefined;
+  const pickCustomerPhoneFromContacts = async (
+    target: "new" | "saved",
+  ) => {
+    if (!Capacitor.isNativePlatform()) {
+      setMessage("Choosing from Contacts is available in the installed iPhone app.");
+      return;
+    }
+    try {
+      const result = await NativeContactPicker.pickPhone();
+      if (!result.phone) return;
+      if (target === "new") {
+        setCustomerMobile(result.phone);
+        if (result.name) setCustomerName(result.name);
+      } else setEditedCustomerMobile(result.phone);
+      setMessage(
+        result.name
+          ? `${result.name}'s number was selected from Contacts.`
+          : "Customer number selected from Contacts.",
+      );
+    } catch (reason) {
+      setMessage(
+        reason instanceof Error
+          ? `Could not open Contacts: ${reason.message}`
+          : "Could not open Contacts.",
+      );
+    }
+  };
   const toggleBillItems = async (sale: SavedSale) => {
     const expanded = expandedBillIds.has(sale.id);
     setExpandedBillIds((current) => {
@@ -2031,6 +2472,78 @@ function Billing({
         item.product.id === productId ? { ...item, discount } : item,
       ),
     );
+  const requestBillEdit = (sale: SavedSale) => {
+    if (cart.length) {
+      setMessage("Complete or clear the current new bill before editing a saved bill.");
+      return;
+    }
+    setBillEditCandidate(sale);
+    setBillEditPin("");
+    setBillEditPinError("");
+  };
+  const unlockBillForEditing = async () => {
+    if (!billEditCandidate || unlockingBillEdit) return;
+    if (billEditPin !== "1234") {
+      setBillEditPinError("Incorrect PIN.");
+      return;
+    }
+    setUnlockingBillEdit(true);
+    setBillEditPinError("");
+    try {
+      const productsForBill = await Promise.all(
+        billEditCandidate.items.map((item) =>
+          sharedProductRepository.getForSale(item.productId),
+        ),
+      );
+      const byId = new Map(productsForBill.map((product) => [product.id, product]));
+      const nextCart = billEditCandidate.items.map((item) => {
+        const product = byId.get(item.productId);
+        if (!product) throw new Error(`${item.name} is no longer available.`);
+        return {
+          product: {
+            ...product,
+            // The bill's own quantity is effectively available again while
+            // editing, because the server restores it before saving changes.
+            stockQuantity: product.stockQuantity + item.quantity,
+          },
+          quantity: item.quantity,
+          unitPricePaise: item.unitPricePaise,
+          discount: { type: "AMOUNT" as const, value: item.discountPaise ?? 0 },
+        };
+      });
+      cartRef.current = nextCart;
+      setCart(nextCart);
+      setPaymentMethod(billEditCandidate.paymentMethod);
+      setCustomerMobile(billEditCandidate.customerPhone ?? "");
+      setCustomerName("");
+      setTotalDiscount({
+        type: "AMOUNT",
+        value: billEditCandidate.discountPaise ?? 0,
+      });
+      setSaleBeingEdited(billEditCandidate);
+      setBillEditCandidate(undefined);
+      setMessage(
+        `Editing ${billEditCandidate.invoiceNumber}. Save changes when the bill is correct.`,
+      );
+    } catch (reason) {
+      setBillEditPinError(
+        reason instanceof Error ? reason.message : "Could not open this bill for editing.",
+      );
+    } finally {
+      setUnlockingBillEdit(false);
+    }
+  };
+  const cancelBillEdit = () => {
+    setCart([]);
+    cartRef.current = [];
+    setSaleBeingEdited(undefined);
+    setBillEditPin("");
+    setCustomerMobile("");
+    setCustomerName("");
+    setPaymentMethod("CASH");
+    setTotalDiscount({ type: "AMOUNT", value: 0 });
+    setMessage("Bill editing cancelled. The saved bill was not changed.");
+  };
   const completeSale = async () => {
     if (!cart.length || completing) return;
     if (customerPhoneError) {
@@ -2041,33 +2554,55 @@ function Billing({
     setMessage("Completing shared sale…");
     try {
       const completedAt = new Date();
-      const sale = await completeSharedSale(
-        cart.map((item) => ({
-          productId: item.product.id,
-          quantity: item.quantity,
-          itemDiscountPaise: calculateDiscountPaise(
-            item.product.sellingPricePaise * item.quantity,
-            item.discount,
-          ),
-        })),
-        paymentMethod,
-        customerPhone,
-        totalDiscountPaise,
-      );
+      const saleItems = cart.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+        itemDiscountPaise: calculateDiscountPaise(
+          cartItemUnitPrice(item) * item.quantity,
+          item.discount,
+        ),
+      }));
+      const sale = saleBeingEdited
+        ? {
+            id: saleBeingEdited.id,
+            invoiceNumber: saleBeingEdited.invoiceNumber,
+            grandTotalPaise: await updateCompletedSharedSale(
+              saleBeingEdited.id,
+              saleItems,
+              paymentMethod,
+              customerPhone,
+              totalDiscountPaise,
+              billEditPin,
+              customerName,
+            ),
+          }
+        : await completeSharedSale(
+            saleItems,
+            paymentMethod,
+            customerPhone,
+            totalDiscountPaise,
+            customerName,
+          );
       setLastCompletedSale({
         invoiceNumber: sale.invoiceNumber,
         items: receiptItemsFromCart(cart),
-        totalPaise: total,
-        discountPaise: itemDiscountTotal + totalDiscountPaise,
+        totalPaise: sale.grandTotalPaise,
+        totalDiscountPaise,
         paymentMethod,
         customerPhone,
         completedAt,
       });
       setCart([]);
+      cartRef.current = [];
       setTotalDiscount({ type: "AMOUNT", value: 0 });
       setCustomerMobile("");
+      setCustomerName("");
+      setSaleBeingEdited(undefined);
+      setBillEditPin("");
       setMessage(
-        `Sale ${sale.invoiceNumber} completed. Inventory is updated for all staff.`,
+        saleBeingEdited
+          ? `Bill ${sale.invoiceNumber} updated. Inventory is adjusted for all staff.`
+          : `Sale ${sale.invoiceNumber} completed. Inventory is updated for all staff.`,
       );
       await onCompleted();
       await refreshBills();
@@ -2111,6 +2646,10 @@ function Billing({
   };
   const requestReceiptPrint = (bill: BillDetails) => {
     const error = printReceipt(bill);
+    if (Capacitor.isNativePlatform()) {
+      setMessage("");
+      return;
+    }
     setMessage(
       error ??
         `Print receipt opened for ${bill.invoiceNumber}. Select 58 mm paper where your printer supports it.`,
@@ -2119,18 +2658,36 @@ function Billing({
   return (
     <>
       <section className="billing-layout">
-        <div className="card">
+        <div className="card" ref={billEditorRef}>
           <div className="toolbar">
             <div>
-              <p className="eyebrow">FAST BILLING</p>
-              <h2>New sale</h2>
+              <p className="eyebrow">
+                {saleBeingEdited ? "PROTECTED BILL EDIT" : "FAST BILLING"}
+              </p>
+              <h2>
+                {saleBeingEdited
+                  ? `Editing ${saleBeingEdited.invoiceNumber}`
+                  : "New sale"}
+              </h2>
               <p>
-                Scan each product continuously. Tag photos load in the
-                background after the item is added.
+                {saleBeingEdited
+                  ? "Add, remove, or adjust sarees, then save the corrected bill."
+                  : "Scan each product continuously. Tag photos load in the background after the item is added."}
               </p>
             </div>
             <div className="billing-actions">
-              <button className="scan" onClick={() => setScannerOpen(true)}>
+              <button
+                className="scan"
+                onClick={() => {
+                  // Always recreate the scanner. This also recovers if iOS
+                  // dismissed its native camera without sending a close event.
+                  setScannerOpen(false);
+                  window.setTimeout(() => {
+                    setScannerSession((session) => session + 1);
+                    setScannerOpen(true);
+                  }, 120);
+                }}
+              >
                 Scan barcode
               </button>
               <button
@@ -2188,8 +2745,10 @@ function Billing({
                 Your bill is empty. Scan or enter a barcode to add a saree.
               </p>
             ) : (
-              cart.map(({ product, quantity, discount }) => {
-                const grossLine = product.sellingPricePaise * quantity;
+              cart.map((item) => {
+                const { product, quantity, discount } = item;
+                const unitPricePaise = cartItemUnitPrice(item);
+                const grossLine = unitPricePaise * quantity;
                 const itemDiscountPaise = calculateDiscountPaise(
                   grossLine,
                   discount,
@@ -2216,7 +2775,7 @@ function Billing({
                       <strong>{product.name}</strong>
                       <small>
                         {product.barcode} ·{" "}
-                        {formatInr(product.sellingPricePaise)}
+                        {formatInr(unitPricePaise)}
                       </small>
                       <DiscountEditor
                         label="Item discount"
@@ -2259,6 +2818,15 @@ function Billing({
             </strong>
           </div>
           <label>
+            Customer name <small>(optional)</small>
+            <input
+              autoComplete="name"
+              value={customerName}
+              onChange={(event) => setCustomerName(event.target.value)}
+              placeholder="Customer name"
+            />
+          </label>
+          <label>
             Customer mobile <small>(optional — for WhatsApp bill)</small>
             <input
               type="tel"
@@ -2273,6 +2841,15 @@ function Billing({
             <p className="field-error" role="alert">
               {customerPhoneError}
             </p>
+          )}
+          {Capacitor.isNativePlatform() && (
+            <button
+              className="secondary contact-picker-button"
+              type="button"
+              onClick={() => void pickCustomerPhoneFromContacts("new")}
+            >
+              Choose from Contacts
+            </button>
           )}
           <label>
             Payment method
@@ -2305,8 +2882,19 @@ function Billing({
             disabled={!cart.length || completing || Boolean(customerPhoneError)}
             onClick={() => void completeSale()}
           >
-            {completing ? "Completing sale…" : "Complete sale"}
+            {completing
+              ? saleBeingEdited
+                ? "Saving bill changes…"
+                : "Completing sale…"
+              : saleBeingEdited
+                ? "Save bill changes"
+                : "Complete sale"}
           </button>
+          {saleBeingEdited && (
+            <button className="secondary" onClick={cancelBillEdit} disabled={completing}>
+              Cancel bill edit
+            </button>
+          )}
           {lastCompletedSale && (
             <>
               <button
@@ -2419,6 +3007,13 @@ function Billing({
                     <strong>{formatInr(sale.totalPaise)}</strong>
                     <button
                       className="secondary"
+                      onClick={() => requestBillEdit(sale)}
+                      disabled={Boolean(saleBeingEdited)}
+                    >
+                      Edit bill
+                    </button>
+                    <button
+                      className="secondary"
                       onClick={() => openCustomerPhoneEditor(sale)}
                     >
                       Edit customer
@@ -2477,6 +3072,7 @@ function Billing({
       </section>
       {scannerOpen && (
         <LiveBarcodeScannerModal
+          key={scannerSession}
           onDetected={addBarcodeToCart}
           onClose={() => setScannerOpen(false)}
         />
@@ -2486,6 +3082,65 @@ function Billing({
         alt="Price-tag photo"
         onClose={() => setCartPreviewImage(undefined)}
       />
+      {billEditCandidate && (
+        <div className="dialog-backdrop" role="presentation">
+          <form
+            className="action-menu bill-edit-pin-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bill-edit-pin-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void unlockBillForEditing();
+            }}
+          >
+            <p className="eyebrow">BILL EDIT PROTECTION</p>
+            <h2 id="bill-edit-pin-title">Enter PIN to edit bill</h2>
+            <p>
+              You are about to change {billEditCandidate.invoiceNumber}. Stock,
+              totals, and bill items will be corrected when you save.
+            </p>
+            <label>
+              Staff PIN
+              <input
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="off"
+                maxLength={4}
+                value={billEditPin}
+                onChange={(event) => {
+                  setBillEditPin(event.target.value.replace(/\D/g, ""));
+                  setBillEditPinError("");
+                }}
+                placeholder="••••"
+                autoFocus
+              />
+            </label>
+            {billEditPinError && (
+              <p className="field-error" role="alert">
+                {billEditPinError}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setBillEditCandidate(undefined)}
+                disabled={unlockingBillEdit}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={unlockingBillEdit || billEditPin.length !== 4}
+              >
+                {unlockingBillEdit ? "Opening bill…" : "Unlock bill"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {editingBill && (
         <div className="dialog-backdrop" role="presentation">
           <section
@@ -2518,6 +3173,16 @@ function Billing({
               <p className="field-error" role="alert">
                 {editedCustomerPhoneError}
               </p>
+            )}
+            {Capacitor.isNativePlatform() && (
+              <button
+                className="secondary contact-picker-button"
+                type="button"
+                onClick={() => void pickCustomerPhoneFromContacts("saved")}
+                disabled={savingCustomerPhone}
+              >
+                Choose from Contacts
+              </button>
             )}
             <div className="dialog-actions">
               <button
@@ -2591,8 +3256,15 @@ async function shareWhatsAppBill(
         barcode: item.barcode,
         quantity: item.quantity,
         lineTotal: formatInr(item.lineTotalPaise),
+        itemDiscountText: item.discountPaise
+          ? formatInr(item.discountPaise)
+          : undefined,
       })),
       totalText: formatInr(sale.totalPaise),
+      discountOnTotalText: sale.totalDiscountPaise
+        ? formatInr(sale.totalDiscountPaise)
+        : undefined,
+      businessContactText: BUSINESS_CONTACT,
       paymentMethod,
       customerPhone: sale.customerPhone,
       logoDataUrl,
@@ -2624,16 +3296,28 @@ function sendWhatsAppTextBill(sale: BillDetails): string | undefined {
     "",
     ...itemLines,
     "",
+    ...(sale.totalDiscountPaise
+      ? [`Discount on total: -${formatInr(sale.totalDiscountPaise)}`]
+      : []),
     `*Total: ${formatInr(sale.totalPaise)}*`,
     `Payment: ${paymentMethod}`,
     "",
     "Thank you for shopping with us.",
+    BUSINESS_CONTACT,
   ].join("\n");
   const phone = sale.customerPhone.replace(/\D/g, "");
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
   const popup = window.open(url, "_blank", "noopener,noreferrer");
   if (!popup) window.location.assign(url);
   return `WhatsApp opened for ${sale.customerPhone}. Review the bill, then tap Send.`;
+}
+
+function openWhatsAppCustomer(phone: string) {
+  const number = phone.replace(/\D/g, "");
+  if (!number) return;
+  const url = `https://wa.me/${number}`;
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (!popup) window.location.assign(url);
 }
 
 async function loadLogoDataUrl(): Promise<string | undefined> {
@@ -2656,8 +3340,7 @@ async function loadLogoDataUrl(): Promise<string | undefined> {
 }
 
 function printReceipt(sale: BillDetails): string | undefined {
-  if (Capacitor.isNativePlatform())
-    return "Direct Bluetooth printing is not configured for the PSF-58D yet. Open this bill in the browser to use the 58 mm print receipt.";
+  if (Capacitor.isNativePlatform()) return undefined;
   const receipt = window.open("", "_blank", "width=360,height=700");
   if (!receipt)
     return "The receipt window was blocked. Allow pop-ups for this site, then try Print again.";
@@ -2677,7 +3360,7 @@ function printReceipt(sale: BillDetails): string | undefined {
           : "Other";
   const logoUrl = new URL(boutiqueLogo, window.location.href).href;
   receipt.document.write(
-    `<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:16px;padding-bottom:80px;box-sizing:border-box}h1{text-align:center;font-size:17px;margin:0}.logo{display:block;width:44mm;height:44mm;object-fit:contain;margin:0 auto 2mm}p{text-align:center;margin:4px 0}.end-marker{margin-top:40px;margin-bottom:0;text-align:center;letter-spacing:0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:12px}</style><img id="boutique-logo" class="logo" src="${escapeHtml(logoUrl)}" alt="Abhijatya Boutique"><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString("en-IN")}</p><table>${rows}</table>${sale.discountPaise ? `<p>Discount: -${formatInr(sale.discountPaise)}</p>` : ""}<p class="total">Total: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p><p class="end-marker">---------------</p><script>const printReceipt=()=>setTimeout(()=>{window.focus();window.print()},80);const logo=document.getElementById('boutique-logo');if(logo.complete)printReceipt();else{logo.addEventListener('load',printReceipt,{once:true});logo.addEventListener('error',printReceipt,{once:true})}</script>`,
+    `<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:16px;box-sizing:border-box}h1{text-align:center;font-size:17px;margin:0}.logo{display:block;width:44mm;height:44mm;object-fit:contain;margin:0 auto 2mm}p{text-align:center;margin:4px 0}.end-marker{margin:8px 0 0;text-align:center;letter-spacing:0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:12px}</style><img id="boutique-logo" class="logo" src="${escapeHtml(logoUrl)}" alt="Abhijatya Boutique"><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString("en-IN")}</p><table>${rows}</table>${sale.totalDiscountPaise ? `<p>Discount on total: -${formatInr(sale.totalDiscountPaise)}</p>` : ""}<p class="total">Total: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p><p>${BUSINESS_CONTACT}</p><p class="end-marker">---------------</p><script>const printReceipt=()=>setTimeout(()=>{window.focus();window.print()},80);const logo=document.getElementById('boutique-logo');if(logo.complete)printReceipt();else{logo.addEventListener('load',printReceipt,{once:true});logo.addEventListener('error',printReceipt,{once:true})}</script>`,
   );
   receipt.document.close();
   return undefined;

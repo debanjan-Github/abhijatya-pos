@@ -25,13 +25,20 @@ export interface SavedSale {
   items: SavedSaleItem[]
 }
 
-export async function completeSharedSale(items: SaleLineInput[], paymentMethod: PaymentMethod, customerPhone?: string, discountPaise = 0) {
+export interface CustomerProfile {
+  phone: string
+  name?: string
+  isApt: boolean
+}
+
+export async function completeSharedSale(items: SaleLineInput[], paymentMethod: PaymentMethod, customerPhone?: string, discountPaise = 0, customerName?: string) {
   if (!supabase) throw new Error('Supabase is not configured.')
   const { data, error } = await supabase.rpc('complete_sale', {
     p_items: items.map((item) => ({ product_id: item.productId, quantity: item.quantity, item_discount_paise: item.itemDiscountPaise ?? 0 })),
     p_payment_method: paymentMethod,
     p_customer_phone: customerPhone ?? null,
     p_discount_paise: discountPaise,
+    p_customer_name: customerName?.trim() || null,
   })
   if (error) throw new Error(error.message)
   const sale = Array.isArray(data) ? data[0] : data
@@ -46,6 +53,55 @@ export async function updateSharedSaleCustomerPhone(saleId: string, customerPhon
   const { error } = await supabase.rpc('update_sale_customer_phone', {
     p_sale_id: saleId,
     p_customer_phone: customerPhone ?? null,
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function updateCompletedSharedSale(
+  saleId: string,
+  items: SaleLineInput[],
+  paymentMethod: PaymentMethod,
+  customerPhone: string | undefined,
+  discountPaise: number,
+  pin: string,
+  customerName?: string,
+): Promise<number> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const { data, error } = await supabase.rpc('update_completed_sale', {
+    p_sale_id: saleId,
+    p_items: items.map((item) => ({
+      product_id: item.productId,
+      quantity: item.quantity,
+      item_discount_paise: item.itemDiscountPaise ?? 0,
+    })),
+    p_payment_method: paymentMethod,
+    p_customer_phone: customerPhone ?? null,
+    p_discount_paise: discountPaise,
+    p_pin: pin,
+    p_customer_name: customerName?.trim() || null,
+  })
+  if (error) throw new Error(error.message)
+  const sale = Array.isArray(data) ? data[0] : data
+  return Number(sale?.grand_total_paise ?? 0)
+}
+
+export async function listCustomerProfiles(): Promise<CustomerProfile[]> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const { data, error } = await supabase.rpc('list_customer_profiles')
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as Array<Record<string, unknown>>).map((profile) => ({
+    phone: profile.phone as string,
+    name: (profile.name as string | null) ?? undefined,
+    isApt: Boolean(profile.is_apt),
+  }))
+}
+
+export async function updateCustomerProfile(profile: CustomerProfile): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const { error } = await supabase.rpc('update_customer_profile', {
+    p_phone: profile.phone,
+    p_name: profile.name?.trim() || null,
+    p_is_apt: profile.isApt,
   })
   if (error) throw new Error(error.message)
 }

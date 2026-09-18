@@ -1,6 +1,7 @@
 import UIKit
 import Capacitor
 import VisionKit
+import ContactsUI
 
 @objc(NativeBarcodeScannerPlugin)
 @available(iOS 16.0, *)
@@ -87,6 +88,7 @@ final class NativeBarcodeScannerPlugin: CAPPlugin, CAPBridgedPlugin, DataScanner
         recentlyScanned.removeAll()
         statusLabel = nil
         statusBackground = nil
+        notifyListeners("scannerClosed", data: [:])
         closeButton = nil
     }
 
@@ -245,6 +247,8 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
         let invoiceNumber = call.getString("invoiceNumber") ?? "ABHIJATYA-BILL"
         let dateText = call.getString("dateText") ?? ""
         let totalText = call.getString("totalText") ?? ""
+        let discountOnTotalText = call.getString("discountOnTotalText")
+        let businessContactText = call.getString("businessContactText") ?? "Contact us: +91-8971616481"
         let paymentMethod = call.getString("paymentMethod") ?? ""
         let customerPhone = call.getString("customerPhone") ?? "Not provided"
         let logo = image(from: call.getString("logoDataUrl"))
@@ -260,6 +264,8 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
                     invoiceNumber: invoiceNumber,
                     dateText: dateText,
                     totalText: totalText,
+                    discountOnTotalText: discountOnTotalText,
+                    businessContactText: businessContactText,
                     paymentMethod: paymentMethod,
                     customerPhone: customerPhone,
                     items: items,
@@ -282,15 +288,17 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func makeReceiptPdf(invoiceNumber: String, dateText: String, totalText: String, paymentMethod: String, customerPhone: String, items: [JSObject], logo: UIImage?) -> Data {
+    private func makeReceiptPdf(invoiceNumber: String, dateText: String, totalText: String, discountOnTotalText: String?, businessContactText: String, paymentMethod: String, customerPhone: String, items: [JSObject], logo: UIImage?) -> Data {
         // This PDF is designed for sharing on WhatsApp, so it uses a clear
         // invoice layout. The separate Print action remains the 58 mm receipt.
         let width: CGFloat = 595
         let itemHeight = items.reduce(CGFloat(0)) { total, item in
             let name = item["name"] as? String ?? "Product"
-            return total + max(40, CGFloat((name.count + 42) / 43) * 15 + 25)
+            let itemDiscountHeight: CGFloat = item["itemDiscountText"] == nil ? 0 : 14
+            return total + max(40, CGFloat((name.count + 42) / 43) * 15 + 25) + itemDiscountHeight
         }
-        let height = max(CGFloat(842), 410 + itemHeight + 160)
+        let discountHeight: CGFloat = discountOnTotalText == nil ? 0 : 30
+        let height = max(CGFloat(842), 410 + itemHeight + discountHeight + 160)
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: width, height: height))
         return renderer.pdfData { context in
             context.beginPage()
@@ -343,22 +351,34 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
                 let barcode = item["barcode"] as? String ?? ""
                 let quantity = item["quantity"] as? Int ?? 1
                 let lineTotal = item["lineTotal"] as? String ?? ""
+                let itemDiscountText = item["itemDiscountText"] as? String
                 y = drawWrapped(name, x: margin + 12, y: y, width: 305, attributes: bold, charactersPerLine: 43)
                 ("Code: \(barcode)" as NSString).draw(in: CGRect(x: margin + 12, y: y, width: 305, height: 13), withAttributes: small)
                 ("\(quantity)" as NSString).draw(in: CGRect(x: 396, y: y - 12, width: 45, height: 14), withAttributes: regular.merging([.paragraphStyle: centered]) { $1 })
                 (lineTotal as NSString).draw(in: CGRect(x: 440, y: y - 12, width: 100, height: 14), withAttributes: regular.merging([.paragraphStyle: right]) { $1 })
+                if let itemDiscountText {
+                    ("Item discount: -\(itemDiscountText)" as NSString).draw(in: CGRect(x: margin + 12, y: y + 13, width: 305, height: 13), withAttributes: small)
+                    y += 14
+                }
                 y += 16
                 drawRule(y: y, width: width, margin: margin, color: UIColor.lightGray, thickness: 0.6)
                 y += 12
+            }
+
+            if let discountOnTotalText {
+                ("DISCOUNT ON TOTAL" as NSString).draw(in: CGRect(x: 300, y: y + 5, width: 135, height: 16), withAttributes: small.merging([.paragraphStyle: right]) { $1 })
+                ("-\(discountOnTotalText)" as NSString).draw(in: CGRect(x: 445, y: y + 5, width: 96, height: 16), withAttributes: regular.merging([.paragraphStyle: right]) { $1 })
+                y += 30
             }
 
             ("GRAND TOTAL" as NSString).draw(in: CGRect(x: 335, y: y + 10, width: 100, height: 18), withAttributes: bold.merging([.paragraphStyle: right]) { $1 })
             fillRect(CGRect(x: 445, y: y, width: 96, height: 38), color: boutiqueRed)
             (totalText as NSString).draw(in: CGRect(x: 451, y: y + 10, width: 84, height: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: UIColor.white, .paragraphStyle: right])
             y += 102
-            fillRect(CGRect(x: margin, y: y, width: width - margin * 2, height: 58), color: softTint)
+            fillRect(CGRect(x: margin, y: y, width: width - margin * 2, height: 74), color: softTint)
             ("THANK YOU FOR SHOPPING WITH ABHIJATYA." as NSString).draw(in: CGRect(x: margin, y: y + 14, width: width - margin * 2, height: 18), withAttributes: bold.merging([.paragraphStyle: centered]) { $1 })
             ("Please retain this bill for your reference." as NSString).draw(in: CGRect(x: margin, y: y + 33, width: width - margin * 2, height: 14), withAttributes: small.merging([.paragraphStyle: centered]) { $1 })
+            (businessContactText as NSString).draw(in: CGRect(x: margin, y: y + 49, width: width - margin * 2, height: 14), withAttributes: small.merging([.paragraphStyle: centered]) { $1 })
         }
     }
 
@@ -415,6 +435,61 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
+@objc(NativeContactPickerPlugin)
+final class NativeContactPickerPlugin: CAPPlugin, CAPBridgedPlugin, CNContactPickerDelegate {
+    let identifier = "NativeContactPickerPlugin"
+    let jsName = "NativeContactPicker"
+    let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "pickPhone", returnType: CAPPluginReturnPromise)
+    ]
+
+    private var pendingCall: CAPPluginCall?
+
+    @objc func pickPhone(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let presenter = self.bridge?.viewController else {
+                call.reject("Contacts are not ready.")
+                return
+            }
+            guard self.pendingCall == nil else {
+                call.reject("A contact selection is already open.")
+                return
+            }
+            self.pendingCall = call
+            let picker = CNContactPickerViewController()
+            picker.delegate = self
+            picker.displayedPropertyKeys = [CNContactPhoneNumbersKey]
+            picker.predicateForSelectionOfContact = NSPredicate(value: false)
+            picker.predicateForSelectionOfProperty = NSPredicate(format: "key == %@", CNContactPhoneNumbersKey)
+            presenter.present(picker, animated: true)
+        }
+    }
+
+    func contactPicker(_ picker: CNContactPickerViewController, didSelect contactProperty: CNContactProperty) {
+        guard let call = pendingCall else { return }
+        pendingCall = nil
+        guard let phoneNumber = contactProperty.value as? CNPhoneNumber else {
+            call.reject("Select a phone number from the contact.")
+            return
+        }
+        let digits = phoneNumber.stringValue.filter(\.isNumber)
+        guard !digits.isEmpty else {
+            call.reject("The selected contact has no valid phone number.")
+            return
+        }
+        let contact = contactProperty.contact
+        let name = [contact.givenName, contact.familyName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        call.resolve(["phone": digits, "name": name])
+    }
+
+    func contactPickerDidCancel(_ picker: CNContactPickerViewController) {
+        pendingCall?.resolve(["cancelled": true])
+        pendingCall = nil
+    }
+}
+
 final class AppBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         if #available(iOS 16.0, *) {
@@ -422,6 +497,7 @@ final class AppBridgeViewController: CAPBridgeViewController {
         }
         bridge?.registerPluginInstance(NativeProductActionsPlugin())
         bridge?.registerPluginInstance(NativeBillSharePlugin())
+        bridge?.registerPluginInstance(NativeContactPickerPlugin())
     }
 }
 

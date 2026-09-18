@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Abhijatya POS uses the camera to scan saree barcodes and read price tags.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Abhijatya POS lets staff choose a customer phone number from Contacts while creating a bill.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Abhijatya POS will use Bluetooth to connect to a supported boutique receipt printer.</string>
 	<key>UIApplicationSceneManifest</key>
