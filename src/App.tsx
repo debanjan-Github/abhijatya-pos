@@ -473,6 +473,32 @@ function localDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+type SavedBillFilter = "TODAY" | "DATE" | "ALL";
+const SAVED_BILL_FILTER_STORAGE_KEY = "abhijatya.saved-bill-filter";
+const SAVED_BILL_DATE_STORAGE_KEY = "abhijatya.saved-bill-date";
+
+function getStoredSavedBillFilter(): SavedBillFilter {
+  try {
+    const saved = window.localStorage.getItem(SAVED_BILL_FILTER_STORAGE_KEY);
+    return saved === "DATE" || saved === "ALL" || saved === "TODAY"
+      ? saved
+      : "TODAY";
+  } catch {
+    return "TODAY";
+  }
+}
+
+function getStoredSavedBillDate(): string {
+  try {
+    return (
+      window.localStorage.getItem(SAVED_BILL_DATE_STORAGE_KEY) ||
+      localDateInputValue(new Date())
+    );
+  } catch {
+    return localDateInputValue(new Date());
+  }
+}
+
 function Dashboard({
   products,
   onProducts,
@@ -2203,6 +2229,10 @@ function Billing({
   const [savedBills, setSavedBills] = useState<SavedSale[]>([]);
   const [totalBillCount, setTotalBillCount] = useState(0);
   const [savedBillPage, setSavedBillPage] = useState(1);
+  const [savedBillFilter, setSavedBillFilter] = useState<SavedBillFilter>(
+    getStoredSavedBillFilter,
+  );
+  const [savedBillDate, setSavedBillDate] = useState(getStoredSavedBillDate);
   const [expandedBillIds, setExpandedBillIds] = useState<Set<string>>(
     new Set(),
   );
@@ -2252,12 +2282,39 @@ function Billing({
     totalDiscount,
   );
   const total = afterItemDiscount - totalDiscountPaise;
-  const savedBillPageCount = Math.max(1, Math.ceil(savedBills.length / 5));
+  const filteredSavedBills = useMemo(() => {
+    if (savedBillFilter === "ALL") return savedBills;
+    const selectedDate =
+      savedBillFilter === "TODAY"
+        ? localDateInputValue(new Date())
+        : savedBillDate;
+    return savedBills.filter(
+      (sale) => localDateInputValue(new Date(sale.createdAt)) === selectedDate,
+    );
+  }, [savedBillDate, savedBillFilter, savedBills]);
+  const savedBillPageCount = Math.max(
+    1,
+    Math.ceil(filteredSavedBills.length / 5),
+  );
   const currentSavedBillPage = Math.min(savedBillPage, savedBillPageCount);
-  const paginatedSavedBills = savedBills.slice(
+  const paginatedSavedBills = filteredSavedBills.slice(
     (currentSavedBillPage - 1) * 5,
     currentSavedBillPage * 5,
   );
+  const savedBillFilterDescription =
+    savedBillFilter === "ALL"
+      ? "All saved bills"
+      : savedBillFilter === "TODAY"
+        ? "Bills today"
+        : `Bills on ${new Date(`${savedBillDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`;
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SAVED_BILL_FILTER_STORAGE_KEY, savedBillFilter);
+      window.localStorage.setItem(SAVED_BILL_DATE_STORAGE_KEY, savedBillDate);
+    } catch {
+      // The list continues to work if private browsing blocks local storage.
+    }
+  }, [savedBillDate, savedBillFilter]);
   const customerPhone = normaliseIndianMobile(customerMobile);
   const customerPhoneError =
     customerMobile.trim() && !customerPhone
@@ -2935,17 +2992,53 @@ function Billing({
             <p className="eyebrow">BILL HISTORY</p>
             <h2>Saved bills</h2>
             <p>
-              {totalBillCount} total bill{totalBillCount === 1 ? "" : "s"}
-              · 5 bills per page
+              {savedBillFilterDescription}: {filteredSavedBills.length} bill
+              {filteredSavedBills.length === 1 ? "" : "s"}
+              {savedBillFilter !== "ALL" && (
+                <>
+                  {" "}· {totalBillCount} total
+                </>
+              )}
+              {" "}· 5 bills per page
             </p>
           </div>
-          <button className="secondary" onClick={() => void refreshBills()}>
-            Refresh bills
-          </button>
+          <div className="saved-bill-toolbar-actions">
+            <label>
+              Show bills
+              <select
+                value={savedBillFilter}
+                onChange={(event) => {
+                  setSavedBillFilter(event.target.value as SavedBillFilter);
+                  setSavedBillPage(1);
+                }}
+              >
+                <option value="TODAY">Today</option>
+                <option value="DATE">Choose a date</option>
+                <option value="ALL">All bills</option>
+              </select>
+            </label>
+            {savedBillFilter === "DATE" && (
+              <label>
+                Bill date
+                <input
+                  type="date"
+                  value={savedBillDate}
+                  max={localDateInputValue(new Date())}
+                  onChange={(event) => {
+                    setSavedBillDate(event.target.value);
+                    setSavedBillPage(1);
+                  }}
+                />
+              </label>
+            )}
+            <button className="secondary" onClick={() => void refreshBills()}>
+              Refresh bills
+            </button>
+          </div>
         </div>
         {billsError && <p className="error">{billsError}</p>}
-        {savedBills.length === 0 ? (
-          <p className="empty">No completed bills yet.</p>
+        {filteredSavedBills.length === 0 ? (
+          <p className="empty">No saved bills match this filter.</p>
         ) : (
           <div className="table">
             {paginatedSavedBills.map((sale) => {
@@ -3046,7 +3139,7 @@ function Billing({
             })}
           </div>
         )}
-        {savedBills.length > 0 && savedBillPageCount > 1 && (
+        {filteredSavedBills.length > 0 && savedBillPageCount > 1 && (
           <nav className="pagination" aria-label="Saved bills pagination">
             <button
               className="secondary"
