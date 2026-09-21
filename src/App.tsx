@@ -204,6 +204,7 @@ interface NativeBillSharePlugin {
       name: string;
       barcode: string;
       quantity: number;
+      originalLineTotalText: string;
       lineTotal: string;
       itemDiscountText?: string;
     }>;
@@ -3348,6 +3349,9 @@ async function shareWhatsAppBill(
         name: item.name,
         barcode: item.barcode,
         quantity: item.quantity,
+        originalLineTotalText: formatInr(
+          item.unitPricePaise * item.quantity,
+        ),
         lineTotal: formatInr(item.lineTotalPaise),
         itemDiscountText: item.discountPaise
           ? formatInr(item.discountPaise)
@@ -3370,10 +3374,16 @@ async function shareWhatsAppBill(
 function sendWhatsAppTextBill(sale: BillDetails): string | undefined {
   if (!sale.customerPhone)
     return "Add a customer mobile number before sending the bill.";
-  const itemLines = sale.items.map(
-    (item) =>
-      `• ${item.name} × ${item.quantity} — ${formatInr(item.lineTotalPaise)}`,
-  );
+  const itemLines = sale.items.flatMap((item) => [
+    `• ${item.name} × ${item.quantity}`,
+    `  Original price: ${formatInr(item.unitPricePaise * item.quantity)}`,
+    ...(item.discountPaise
+      ? [
+          `  Item discount: -${formatInr(item.discountPaise)}`,
+          `  Item total: ${formatInr(item.lineTotalPaise)}`,
+        ]
+      : []),
+  ]);
   const paymentMethod =
     sale.paymentMethod === "CASH"
       ? "Cash"
@@ -3392,7 +3402,7 @@ function sendWhatsAppTextBill(sale: BillDetails): string | undefined {
     ...(sale.totalDiscountPaise
       ? [`Discount on total: -${formatInr(sale.totalDiscountPaise)}`]
       : []),
-    `*Total: ${formatInr(sale.totalPaise)}*`,
+    `*Final payable: ${formatInr(sale.totalPaise)}*`,
     `Payment: ${paymentMethod}`,
     "",
     "Thank you for shopping with us.",
@@ -3440,7 +3450,7 @@ function printReceipt(sale: BillDetails): string | undefined {
   const rows = sale.items
     .map(
       (item) =>
-        `<tr><td>${escapeHtml(item.name)}<br><small>${escapeHtml(item.barcode)} × ${item.quantity}</small>${item.discountPaise ? `<br><small>Item discount: -${formatInr(item.discountPaise)}</small>` : ""}</td><td>₹${(item.lineTotalPaise / 100).toLocaleString("en-IN")}</td></tr>`,
+        `<tr><td>${escapeHtml(item.name)}<br><small>${escapeHtml(item.barcode)} × ${item.quantity}</small><br><small>Original price</small>${item.discountPaise ? `<br><small>Item discount: -${formatInr(item.discountPaise)}<br>Item total: ${formatInr(item.lineTotalPaise)}</small>` : ""}</td><td>${formatInr(item.unitPricePaise * item.quantity)}</td></tr>`,
     )
     .join("");
   const paymentMethod =
@@ -3453,7 +3463,7 @@ function printReceipt(sale: BillDetails): string | undefined {
           : "Other";
   const logoUrl = new URL(boutiqueLogo, window.location.href).href;
   receipt.document.write(
-    `<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:16px;box-sizing:border-box}h1{text-align:center;font-size:17px;margin:0}.logo{display:block;width:44mm;height:44mm;object-fit:contain;margin:0 auto 2mm}p{text-align:center;margin:4px 0}.end-marker{margin:8px 0 0;text-align:center;letter-spacing:0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:12px}</style><img id="boutique-logo" class="logo" src="${escapeHtml(logoUrl)}" alt="Abhijatya Boutique"><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString("en-IN")}</p><table>${rows}</table>${sale.totalDiscountPaise ? `<p>Discount on total: -${formatInr(sale.totalDiscountPaise)}</p>` : ""}<p class="total">Total: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p><p>${BUSINESS_CONTACT}</p><p class="end-marker">---------------</p><script>const printReceipt=()=>setTimeout(()=>{window.focus();window.print()},80);const logo=document.getElementById('boutique-logo');if(logo.complete)printReceipt();else{logo.addEventListener('load',printReceipt,{once:true});logo.addEventListener('error',printReceipt,{once:true})}</script>`,
+    `<!doctype html><title>${sale.invoiceNumber}</title><style>@page{size:58mm auto;margin:3mm}body{font-family:monospace;width:52mm;font-size:16px;box-sizing:border-box}h1{text-align:center;font-size:17px;margin:0}.logo{display:block;width:44mm;height:44mm;object-fit:contain;margin:0 auto 2mm}p{text-align:center;margin:4px 0}.end-marker{margin:8px 0 0;text-align:center;letter-spacing:0}table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px dashed #555}td:last-child{text-align:right}.total{font-size:15px;font-weight:bold;text-align:right;margin-top:10px}small{font-size:12px}</style><img id="boutique-logo" class="logo" src="${escapeHtml(logoUrl)}" alt="Abhijatya Boutique"><h1>ABHIJATYA</h1><p>Bill: ${escapeHtml(sale.invoiceNumber)}<br>${sale.completedAt.toLocaleString("en-IN")}</p><table>${rows}</table>${sale.totalDiscountPaise ? `<p>Discount on total: -${formatInr(sale.totalDiscountPaise)}</p>` : ""}<p class="total">Final payable: ${formatInr(sale.totalPaise)}</p><p>Payment: ${paymentMethod}</p><p>Thank you for shopping with us.</p><p>${BUSINESS_CONTACT}</p><p class="end-marker">---------------</p><script>const printReceipt=()=>setTimeout(()=>{window.focus();window.print()},80);const logo=document.getElementById('boutique-logo');if(logo.complete)printReceipt();else{logo.addEventListener('load',printReceipt,{once:true});logo.addEventListener('error',printReceipt,{once:true})}</script>`,
   );
   receipt.document.close();
   return undefined;

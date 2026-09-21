@@ -343,21 +343,23 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
             let headerStyle: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: UIColor.white]
             ("ITEMS" as NSString).draw(in: CGRect(x: margin + 12, y: y + 9, width: 280, height: 12), withAttributes: headerStyle)
             ("QTY" as NSString).draw(in: CGRect(x: 396, y: y + 9, width: 45, height: 12), withAttributes: headerStyle.merging([.paragraphStyle: centered]) { $1 })
-            ("SUBTOTAL" as NSString).draw(in: CGRect(x: 440, y: y + 9, width: 100, height: 12), withAttributes: headerStyle.merging([.paragraphStyle: right]) { $1 })
+            ("ORIGINAL PRICE" as NSString).draw(in: CGRect(x: 440, y: y + 9, width: 100, height: 12), withAttributes: headerStyle.merging([.paragraphStyle: right]) { $1 })
             y += 40
 
             for item in items {
                 let name = item["name"] as? String ?? "Product"
                 let barcode = item["barcode"] as? String ?? ""
                 let quantity = item["quantity"] as? Int ?? 1
+                let originalLineTotalText = item["originalLineTotalText"] as? String ?? item["lineTotal"] as? String ?? ""
                 let lineTotal = item["lineTotal"] as? String ?? ""
                 let itemDiscountText = item["itemDiscountText"] as? String
                 y = drawWrapped(name, x: margin + 12, y: y, width: 305, attributes: bold, charactersPerLine: 43)
                 ("Code: \(barcode)" as NSString).draw(in: CGRect(x: margin + 12, y: y, width: 305, height: 13), withAttributes: small)
                 ("\(quantity)" as NSString).draw(in: CGRect(x: 396, y: y - 12, width: 45, height: 14), withAttributes: regular.merging([.paragraphStyle: centered]) { $1 })
-                (lineTotal as NSString).draw(in: CGRect(x: 440, y: y - 12, width: 100, height: 14), withAttributes: regular.merging([.paragraphStyle: right]) { $1 })
+                (originalLineTotalText as NSString).draw(in: CGRect(x: 440, y: y - 12, width: 100, height: 14), withAttributes: regular.merging([.paragraphStyle: right]) { $1 })
                 if let itemDiscountText {
-                    ("Item discount: -\(itemDiscountText)" as NSString).draw(in: CGRect(x: margin + 12, y: y + 13, width: 305, height: 13), withAttributes: small)
+                    ("Item discount: -\(itemDiscountText)" as NSString).draw(in: CGRect(x: margin + 12, y: y + 13, width: 180, height: 13), withAttributes: small)
+                    ("Item total: \(lineTotal)" as NSString).draw(in: CGRect(x: 300, y: y + 13, width: 240, height: 13), withAttributes: small.merging([.paragraphStyle: right]) { $1 })
                     y += 14
                 }
                 y += 16
@@ -371,9 +373,9 @@ final class NativeBillSharePlugin: CAPPlugin, CAPBridgedPlugin {
                 y += 30
             }
 
-            ("GRAND TOTAL" as NSString).draw(in: CGRect(x: 335, y: y + 10, width: 100, height: 18), withAttributes: bold.merging([.paragraphStyle: right]) { $1 })
+            ("FINAL PAYABLE" as NSString).draw(in: CGRect(x: 305, y: y + 10, width: 130, height: 18), withAttributes: bold.merging([.paragraphStyle: right]) { $1 })
             fillRect(CGRect(x: 445, y: y, width: 96, height: 38), color: boutiqueRed)
-            (totalText as NSString).draw(in: CGRect(x: 451, y: y + 10, width: 84, height: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: UIColor.white, .paragraphStyle: right])
+            (totalText as NSString).draw(in: CGRect(x: 451, y: y + 10, width: 84, height: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 13, weight: .heavy), .foregroundColor: UIColor.white, .paragraphStyle: right])
             y += 102
             fillRect(CGRect(x: margin, y: y, width: width - margin * 2, height: 74), color: softTint)
             ("THANK YOU FOR SHOPPING WITH ABHIJATYA." as NSString).draw(in: CGRect(x: margin, y: y + 14, width: width - margin * 2, height: 18), withAttributes: bold.merging([.paragraphStyle: centered]) { $1 })
